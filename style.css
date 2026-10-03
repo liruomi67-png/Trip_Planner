@@ -175,3 +175,23 @@ details p { margin: 0 0 12px; font-size: 16px; }
 #viewerBody .vmsg { padding: 24px; color: var(--muted); text-align: center; }
 
 button.linkname { background: none; border: 0; padding: 0; text-align: left; font-family: var(--serif); color: var(--ink); display: block; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }
+
+/* directions and nearby */
+.leg { flex-wrap: wrap; row-gap: 2px; padding-right: 4px; }
+.leg .legLinks { display: flex; gap: 12px; font-style: normal; }
+.leg .legLinks a { color: var(--accent); text-decoration: none; font-size: 13px; padding: 4px 0; }
+.nrow { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.ninfo { min-width: 0; }
+.nname { font-family: var(--serif); font-size: 17px; }
+.tagc { font: 11px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-left: 6px; }
+.nbtns { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex: 0 0 auto; }
+.nbtns button { height: 34px; padding: 0 12px; border-radius: 10px; background: transparent; border: 1px solid var(--ink); font-size: 13px; white-space: nowrap; }
+.nbtns button:disabled { border-color: var(--line); color: var(--muted); }
+.nbtns a { font-size: 13px; color: var(--accent); text-decoration: none; }
+.chips { display: flex; gap: 8px; margin-bottom: 6px; }
+.chips button { padding: 6px 14px; border-radius: 999px; background: transparent; border: 1px solid var(--line); font-size: 14px; }
+.chips button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+#actions { flex-wrap: wrap; }
+
+.gmrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.gmrow a { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--accent); color: var(--accent); text-decoration: none; font-size: 14px; }

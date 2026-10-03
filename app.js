@@ -89,6 +89,23 @@ function walk(a, b) {
   const min = Math.max(1, Math.round((km / 4.8) * 60));
   return { km, min };
 }
+// ---- Google Maps links (free, no key; they open the Maps app or website) ----
+const mapText = (p) => {
+  if (!p) return "";
+  if (!p.address) return `${p.lat},${p.lng}`;
+  const t = `${p.name}, ${p.address}`.replace(/\s*\([^)]*\)/g, "").trim();
+  return /paris/i.test(t) ? t : t + ", Paris";
+};
+const hotelText = () => DATA.hotel.address;
+const dirUrl = (from, to, mode) =>
+  `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&travelmode=${mode}`;
+const searchUrl = (p) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapText(p))}`;
+// live Google Maps results around a point (opens Maps; free, no key)
+const gmNear = (term, lat, lng) => `https://www.google.com/maps/search/${encodeURIComponent(term)}/@${(+lat).toFixed(5)},${(+lng).toFixed(5)},17z`;
+const gmLinks = (lat, lng) => `<div class="gmrow">${[["Restaurants", "restaurants"], ["Cafés", "cafes"], ["Bakeries", "bakeries"], ["Boutiques", "boutiques"]]
+  .map(([l, t]) => `<a href="${esc(gmNear(t, lat, lng))}" target="_blank" rel="noopener">${l} ↗</a>`).join("")}</div>`;
+const CAT_LABEL = { eat: "Eat", sweet: "Sweet", shop: "Shop" };
+
 const fmtKm = (km) => (km < 1 ? `${Math.round(km * 100) * 10} m` : `${km.toFixed(1)} km`);
 
 // ---------- start / render ----------
@@ -125,6 +142,7 @@ function render(opts = {}) {
   const departure = d.kind === "departure";
   $("#dayTitle").textContent = d.title;
   $("#mapWrap").hidden = departure;
+  $("#dayMaps").innerHTML = "";
   if (departure) { renderDeparture(d); return; }
 
   const stops = stopsFor(d);
@@ -135,15 +153,18 @@ function render(opts = {}) {
   let html = `<div class="stop"><div class="num h">H</div><div>
       <div class="kicker">Start</div><div class="name">${esc(DATA.hotel.name)}</div>
       <p class="note">${esc(DATA.hotel.address)}</p></div></div>`;
-  let prev = DATA.hotel;
+  let prev = DATA.hotel, prevText = hotelText();
+  const routeTexts = [];
   stops.forEach((s, i) => {
     const p = placeOf(s);
     const located = hasLoc(p);
     if (located) {
       const w = walk(prev, p);
       total += w.km;
-      html += `<div class="leg">${fmtKm(w.km)} · about ${w.min} min on foot</div>`;
-      prev = p;
+      const here = mapText(p);
+      html += `<div class="leg"><span>${fmtKm(w.km)} · about ${w.min} min on foot${w.km > 1.5 ? " · transit may be quicker" : ""}</span>
+        <span class="legLinks"><a href="${esc(dirUrl(prevText, here, "transit"))}" target="_blank" rel="noopener">Transit ↗</a><a href="${esc(dirUrl(prevText, here, "walking"))}" target="_blank" rel="noopener">Walk ↗</a></span></div>`;
+      prev = p; prevText = here; routeTexts.push(here);
       pts.push(p);
     } else {
       html += `<div class="leg">Not on the route yet</div>`;
@@ -175,7 +196,13 @@ function render(opts = {}) {
 
   const edited = !!state.days[d.id];
   $("#actions").innerHTML = `<button class="ghost" data-act="add">+ Add a place</button>` +
+    `<button class="ghost" data-act="nearMe">Near me</button>` +
     (edited ? `<button class="ghost plain" data-act="reset">Reset day</button>` : "");
+  const mids = routeTexts.slice(0, -1).slice(0, 9);
+  $("#dayMaps").innerHTML = routeTexts.length
+    ? `<a class="ghost" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="${esc(
+        `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(hotelText())}&destination=${encodeURIComponent(routeTexts[routeTexts.length - 1])}${mids.length ? `&waypoints=${encodeURIComponent(mids.join("|"))}` : ""}&travelmode=walking`)}">Whole day in Google Maps (walking) ↗</a>`
+    : "";
 
   drawMap(stops, pts, opts.fit);
 }
@@ -239,6 +266,9 @@ function onClick(e) {
   else if (act === "detail") openDetail(id);
   else if (act === "closeDetail") closeDetail();
   else if (act === "addTicket") { $("#fileIn").value = ""; $("#fileIn").click(); }
+  else if (act === "nearMe") nearMe();
+  else if (act === "nearCat") { nearCat = t.dataset.cat; renderNearSheet(); }
+  else if (act === "addNearby") addNearby(t);
   else if (act === "setLink") setNoteLink();
   else if (act === "delLink") { delete state.links[detail.key]; save(); renderNoteLink(); renderTickets(); }
   else if (act === "viewTicket") viewTicket(id);
@@ -277,7 +307,7 @@ function picker({ title, alts = [], onPick, allowPin }) {
     if (!q && alts.length) h += `<h4>Your alternates</h4>` + alts.filter((a) => DATA.places[a]).map((a) => row([a, DATA.places[a]])).join("");
     const rest = all.filter(([pid, p]) => (!q || p.name.toLowerCase().includes(q)) && (q || !alts.includes(pid)));
     h += `<h4>${q ? "Results" : "All places"}</h4>` + (rest.map(row).join("") || `<p class="muted">No match.</p>`);
-    if (allowPin) h += `<h4>Somewhere else</h4><button class="opt" data-pid="__pin"><span>Drop my own pin on the map</span><span class="tag">Custom</span></button>`;
+    if (allowPin) h += `<h4>Somewhere else</h4><button class="opt" data-pid="__gmaps"><span>Paste a Google Maps link</span><span class="tag">From Maps</span></button><button class="opt" data-pid="__pin"><span>Drop my own pin on the map</span><span class="tag">Custom</span></button>`;
     $("#results").innerHTML = h;
   };
   show();
@@ -295,6 +325,7 @@ function openAdd() {
     title: "Add a place", allowPin: true,
     onPick: (pid) => {
       if (pid === "__pin") return startPin(null);
+      if (pid === "__gmaps") return pasteMapsLink(null);
       edit((l) => l.push({ id: uid(), pid, kicker: kickerFor(DATA.places[pid]), note: "" }), { fit: true });
     },
   });
@@ -307,6 +338,7 @@ function openSwap(id) {
     title: placeOf(s) ? "Swap this stop" : "Choose a place", alts: s.alts || [], allowPin: true,
     onPick: (pid) => {
       if (pid === "__pin") return startPin(id);
+      if (pid === "__gmaps") return pasteMapsLink(id);
       edit((l) => {
         const t = l.find((x) => x.id === id);
         const old = t.pid;
@@ -315,6 +347,38 @@ function openSwap(id) {
       }, { fit: true });
     },
   });
+}
+
+// ---------- bring a place back from Google Maps ----------
+function parseMapsUrl(text) {
+  let u;
+  try { u = new URL(text.trim()); } catch { return { err: "link" }; }
+  const host = u.hostname;
+  if (/(^|\.)goo\.gl$/i.test(host)) return { err: "short" };
+  if (!/(^|\.)google\.[a-z.]+$/i.test(host)) return { err: "link" };
+  const href = u.href;
+  const pin = href.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+  const at = href.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  const q = u.searchParams.get("q") || u.searchParams.get("query") || "";
+  const qm = q.match(/^(-?\d+\.\d+),\s*(-?\d+\.\d+)$/);
+  const c = pin || at || qm;
+  if (!c) return { err: "coords" };
+  const m = u.pathname.match(/\/maps\/place\/([^/]+)/);
+  let name = "";
+  try { name = m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : (q && !qm ? q : ""); } catch { name = m ? m[1] : ""; }
+  return { name: name || "Place from Google Maps", lat: +c[1], lng: +c[2] };
+}
+function pasteMapsLink(stopId) {
+  const v = prompt("Paste the Google Maps link of the place");
+  if (!v) return;
+  const r = parseMapsUrl(v);
+  if (r.err === "short") { alert("That is a short link. Open it in Safari first, then copy the long address from the address bar and paste that instead."); return; }
+  if (r.err) { alert("I couldn’t read a place from that link. Open the place in Google Maps, tap Share, copy the link and try again."); return; }
+  const place = { name: r.name, cat: "sight", lat: +r.lat.toFixed(5), lng: +r.lng.toFixed(5) };
+  edit((l) => {
+    if (stopId) { const t = l.find((x) => x.id === stopId); t.place = place; t.pid = null; t.alts = t.alts || []; }
+    else l.push({ id: uid(), pid: null, place, kicker: "From Maps", note: "" });
+  }, { fit: true });
 }
 
 // ---------- drop a pin ----------
@@ -338,6 +402,58 @@ function onMapClick(e) {
     if (stopId) { const t = l.find((x) => x.id === stopId); t.place = place; t.pid = null; }
     else l.push({ id: uid(), pid: null, place, kicker: "Custom", note: "" });
   }, { fit: true });
+}
+
+// ---------- nearby recommendations (curated sample list) ----------
+let nearCat = "all";
+let nearOrigin = null;
+function nearbyList(lat, lng, { limit = 8, maxKm = Infinity, cat = "all", exclude = "" } = {}) {
+  return (DATA.nearby || [])
+    .map((n, i) => ({ ...n, i, km: haversine({ lat, lng }, n) * 1.25 }))
+    .filter((n) => n.km <= maxKm && (cat === "all" || n.cat === cat) && n.name !== exclude && !exclude.includes(n.name))
+    .sort((a, b) => a.km - b.km)
+    .slice(0, limit)
+    .map((n) => ({ ...n, min: Math.max(1, Math.round((n.km / 4.8) * 60)) }));
+}
+function nearbyHtml(list) {
+  if (!list.length) return `<p class="muted">Nothing on the list nearby.</p>`;
+  return list.map((n) => `<div class="nrow">
+      <div class="ninfo"><div class="nname">${esc(n.name)} <span class="tagc">${CAT_LABEL[n.cat] || ""}</span></div>
+        <div class="note">${esc(n.note)}</div>
+        <div class="note">${fmtKm(n.km)} · about ${n.min} min on foot</div></div>
+      <div class="nbtns"><button data-act="addNearby" data-i="${n.i}">Add to day</button><a href="${esc(searchUrl(n))}" target="_blank" rel="noopener">Map ↗</a></div>
+    </div>`).join("");
+}
+function addNearby(btn) {
+  const n = DATA.nearby[+btn.dataset.i];
+  if (!n || btn.disabled) return;
+  edit((l) => l.push({
+    id: uid(), pid: null, kicker: { eat: "Eat", sweet: "Treat", shop: "Shopping" }[n.cat] || "Stop", note: n.note,
+    place: { name: n.name, cat: n.cat, lat: n.lat, lng: n.lng, address: n.address },
+  }), { fit: true });
+  btn.textContent = "Added ✓";
+  btn.disabled = true;
+}
+function nearMe() {
+  if (!navigator.geolocation) { openSheet(`<h3>Near me</h3><p>This browser can’t share your location.</p>`); return; }
+  openSheet(`<h3>Near me</h3><p class="muted">Finding where you are…</p>`);
+  navigator.geolocation.getCurrentPosition(
+    (pos) => { nearOrigin = { lat: pos.coords.latitude, lng: pos.coords.longitude }; nearCat = "all"; renderNearSheet(); },
+    () => openSheet(`<h3>Near me</h3><p>Location is off for this app. Turn it on in Settings → Privacy &amp; Security → Location Services → Safari Websites, then try again. You can also open Details on any stop to see places near it.</p>`),
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+}
+function renderNearSheet() {
+  if (!nearOrigin) return;
+  const list = nearbyList(nearOrigin.lat, nearOrigin.lng, { limit: 8, cat: nearCat });
+  const chip = (c, label) => `<button data-act="nearCat" data-cat="${c}" class="${nearCat === c ? "on" : ""}">${label}</button>`;
+  const far = list.length && list[0].km > 4;
+  openSheet(`<h3>Near you now</h3>
+    <div class="chips">${chip("all", "All")}${chip("eat", "Eat")}${chip("sweet", "Sweet")}${chip("shop", "Shop")}</div>
+    <p class="note" style="margin:6px 0 8px">Live results with ratings and hours, in Google Maps:</p>${gmLinks(nearOrigin.lat, nearOrigin.lng)}
+    <p class="note" style="margin:14px 0 0">Our hand-picked favourites:</p>
+    ${far ? `<p class="note">You seem to be far from the Paris list. Distances below are from where you are.</p>` : ""}
+    ${nearbyHtml(list)}
+    <p class="privacy">Your location stays on your phone. Favourites are a hand-picked list, so check hours before you go.</p>`);
 }
 
 // ---------- tickets (kept in this phone's browser storage only) ----------
@@ -411,6 +527,7 @@ function openDetail(stopId) {
       <div id="noteLink"></div>
       <p class="privacy">Saved only on this phone. It is never uploaded. Keep the original in Apple Notes as a backup.</p></section>
     <section><h3>Opening hours</h3>${hoursHtml(g, d.date)}</section>
+    ${hasLoc(p) ? `<section><h3>Nearby to eat and browse</h3><p class="note" style="margin:0 0 8px">Live results with ratings and hours, in Google Maps:</p>${gmLinks(p.lat, p.lng)}<p class="note" style="margin:14px 0 0">Our hand-picked favourites:</p>${nearbyHtml(nearbyList(p.lat, p.lng, { limit: 6, maxKm: 1.2, exclude: p.name }))}<p class="privacy">Favourites are a hand-picked list, so check hours before you go.</p></section>` : ""}
     ${g.tip ? `<section><h3>Tour guide tip</h3><div class="callout">${esc(g.tip)}</div></section>` : ""}
     ${hi ? `<section><h3>Don’t miss</h3>${hi}</section>` : ""}
     ${hs ? `<section><h3>Stories and history</h3>${hs}</section>` : ""}
