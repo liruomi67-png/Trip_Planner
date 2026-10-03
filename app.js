@@ -60,7 +60,11 @@ async function boot() {
 function showLock(msg) { $("#lock").hidden = false; if (msg) $("#lockMsg").textContent = msg; }
 
 // ---------- helpers ----------
-const day = () => DATA.days.find((d) => d.id === dayId);
+let cityId = "paris";
+const city = () => DATA.cities.find((c) => c.id === cityId);
+const HOTEL = () => city().hotel;
+const allDays = () => DATA.cities.flatMap((c) => c.days);
+const day = () => city().days.find((d) => d.id === dayId);
 const stopsFor = (d) => state.days[d.id] || d.stops;
 const placeOf = (s) => s.place || (s.pid ? DATA.places[s.pid] : null);
 const hasLoc = (p) => p && typeof p.lat === "number" && typeof p.lng === "number";
@@ -94,9 +98,10 @@ const mapText = (p) => {
   if (!p) return "";
   if (!p.address) return `${p.lat},${p.lng}`;
   const t = `${p.name}, ${p.address}`.replace(/\s*\([^)]*\)/g, "").trim();
-  return /paris/i.test(t) ? t : t + ", Paris";
+  const cn = city().name;
+  return t.toLowerCase().includes(cn.toLowerCase()) ? t : `${t}, ${cn}`;
 };
-const hotelText = () => DATA.hotel.address;
+const hotelText = () => HOTEL().address;
 const dirUrl = (from, to, mode) =>
   `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&travelmode=${mode}`;
 const searchUrl = (p) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapText(p))}`;
@@ -104,7 +109,7 @@ const searchUrl = (p) => `https://www.google.com/maps/search/?api=1&query=${enco
 const gmNear = (term, lat, lng) => `https://www.google.com/maps/search/${encodeURIComponent(term)}/@${(+lat).toFixed(5)},${(+lng).toFixed(5)},17z`;
 const gmLinks = (lat, lng) => `<div class="gmrow">${[["Restaurants", "restaurants"], ["Cafés", "cafes"], ["Bakeries", "bakeries"], ["Boutiques", "boutiques"]]
   .map(([l, t]) => `<a href="${esc(gmNear(t, lat, lng))}" target="_blank" rel="noopener">${l} ↗</a>`).join("")}</div>`;
-const CAT_LABEL = { eat: "Eat", sweet: "Sweet", shop: "Shop" };
+const CAT_LABEL = { eat: "Eat", sweet: "Sweet", shop: "Shop", sight: "Sight" };
 
 const fmtKm = (km) => (km < 1 ? `${Math.round(km * 100) * 10} m` : `${km.toFixed(1)} km`);
 
@@ -112,8 +117,11 @@ const fmtKm = (km) => (km < 1 ? `${Math.round(km * 100) * 10} m` : `${km.toFixed
 function start() {
   $("#app").hidden = false;
   $("#dates").textContent = DATA.trip.dates;
-  dayId = store.raw("paris.day") && DATA.days.some((d) => d.id === store.raw("paris.day")) ? store.raw("paris.day") : DATA.days[0].id;
-  map = L.map("map", { zoomControl: true, attributionControl: true, minZoom: 11, maxZoom: 18 }).setView([DATA.hotel.lat, DATA.hotel.lng], 14);
+  const savedDay = store.raw("paris.day");
+  const hit = DATA.cities.find((c) => c.days.some((d) => d.id === savedDay));
+  cityId = hit ? hit.id : DATA.cities[0].id;
+  dayId = hit ? savedDay : city().days[0].id;
+  map = L.map("map", { zoomControl: true, attributionControl: true, minZoom: 11, maxZoom: 18 }).setView([HOTEL().lat, HOTEL().lng], 14);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxNativeZoom: 16, maxZoom: 18, crossOrigin: true,
     attribution: "© OpenStreetMap contributors",
@@ -132,7 +140,9 @@ function start() {
 }
 
 function renderTabs() {
-  $("#tabs").innerHTML = DATA.days.map((d) =>
+  $("#cities").innerHTML = DATA.cities.map((c) =>
+    `<button data-act="city" data-id="${c.id}" aria-pressed="${c.id === cityId}">${esc(c.name)}<span>${esc(c.dates)}</span></button>`).join("");
+  $("#tabs").innerHTML = city().days.map((d) =>
     `<button role="tab" data-act="tab" data-id="${d.id}" aria-selected="${d.id === dayId}">${esc(d.tab)}</button>`).join("");
 }
 
@@ -141,19 +151,24 @@ function render(opts = {}) {
   const d = day();
   const departure = d.kind === "departure";
   $("#dayTitle").textContent = d.title;
+  $("#cityTitle").textContent = city().name;
+  document.title = city().name;
+  $("#dayNote").textContent = d.note || "";
+  $("#heads").innerHTML = (d.heads || []).length
+    ? `<details class="headsup"><summary>Worth checking · ${d.heads.length}</summary><ul>${d.heads.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></details>` : "";
   $("#mapWrap").hidden = departure;
   $("#dayMaps").innerHTML = "";
   if (departure) { renderDeparture(d); return; }
 
   const stops = stopsFor(d);
-  const pts = [DATA.hotel];
+  const pts = [HOTEL()];
   let total = 0;
 
   // list
   let html = `<div class="stop"><div class="num h">H</div><div>
-      <div class="kicker">Start</div><div class="name">${esc(DATA.hotel.name)}</div>
-      <p class="note">${esc(DATA.hotel.address)}</p></div></div>`;
-  let prev = DATA.hotel, prevText = hotelText();
+      <div class="kicker">Start</div><div class="name">${esc(HOTEL().name)}</div>
+      <p class="note">${esc(HOTEL().address)}</p></div></div>`;
+  let prev = HOTEL(), prevText = hotelText();
   const routeTexts = [];
   stops.forEach((s, i) => {
     const p = placeOf(s);
@@ -171,6 +186,8 @@ function render(opts = {}) {
     }
     const name = p ? p.name : "Open slot";
     const closed = closedOn(s.pid, d.date);
+    const warn = timeWarn(s, d.date);
+    const notice = alertFor(s.pid, d.date);
     const tkKey = s.pid || "custom:" + s.id;
     const tk = (ticketCounts[tkKey] || 0) + (state.links[tkKey] ? 1 : 0);
     html += `<div class="stop" id="stop-${s.id}"><div class="num">${i + 1}</div><div>
@@ -180,6 +197,8 @@ function render(opts = {}) {
       ${s.time ? `<span class="chip">${esc(s.time)}${s.timeLabel ? " · " + esc(s.timeLabel) : ""}</span>` : ""}
       ${tk ? `<span class="chip">Ticket saved</span>` : ""}
       ${closed ? `<span class="chip warn">Closed this day</span>` : ""}
+      ${!closed && warn ? `<span class="chip warn">${esc(warn)}</span>` : ""}
+      ${notice ? `<span class="chip warn">Check: closure notice</span>` : ""}
       ${!located ? `<span class="chip warn">Needs a location</span>` : ""}
       <div class="tools">
         <button data-act="up" data-id="${s.id}" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
@@ -211,7 +230,7 @@ function drawMap(stops, pts, fit) {
   map.invalidateSize();
   layer.clearLayers();
   const icon = (label, cls = "") => L.divIcon({ className: "", html: `<div class="pin ${cls}">${label}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
-  L.marker([DATA.hotel.lat, DATA.hotel.lng], { icon: icon("H", "h") }).bindPopup(esc(DATA.hotel.name)).addTo(layer);
+  L.marker([HOTEL().lat, HOTEL().lng], { icon: icon("H", "h") }).bindPopup(esc(HOTEL().name)).addTo(layer);
   stops.forEach((s, i) => {
     const p = placeOf(s);
     if (!hasLoc(p)) return;
@@ -255,7 +274,16 @@ function onClick(e) {
   const t = e.target.closest("[data-act]");
   if (!t) return;
   const { act, id } = t.dataset;
-  if (act === "tab") { dayId = id; store.setRaw("paris.day", id); cancelPending(); render({ fit: true }); window.scrollTo({ top: 0 }); }
+  if (act === "city") {
+    if (id !== cityId) {
+      cityId = id; cancelPending();
+      const saved = store.raw("paris.day." + id);
+      dayId = city().days.some((d) => d.id === saved) ? saved : city().days[0].id;
+      store.setRaw("paris.day", dayId);
+      render({ fit: true }); offlineStatus(); window.scrollTo({ top: 0 });
+    }
+  }
+  else if (act === "tab") { dayId = id; store.setRaw("paris.day", id); store.setRaw("paris.day." + cityId, id); cancelPending(); render({ fit: true }); window.scrollTo({ top: 0 }); }
   else if (act === "up") edit((l) => move(l, id, -1));
   else if (act === "down") edit((l) => move(l, id, 1));
   else if (act === "remove") edit((l) => { l.splice(l.findIndex((s) => s.id === id), 1); }, { fit: true });
@@ -296,7 +324,7 @@ function closeSheet() { $("#sheet").hidden = true; $("#scrim").hidden = true; }
 const catLabel = { sight: "Sight", food: "Eat", shop: "Shop" };
 
 function picker({ title, alts = [], onPick, allowPin }) {
-  const all = Object.entries(DATA.places).sort((a, b) => a[1].name.localeCompare(b[1].name));
+  const all = Object.entries(DATA.places).filter(([, p]) => (p.city || "paris") === cityId).sort((a, b) => a[1].name.localeCompare(b[1].name));
   openSheet(`<h3>${esc(title)}</h3>
     <input type="search" id="q" placeholder="Search places" aria-label="Search places">
     <div id="results"></div>`);
@@ -428,7 +456,7 @@ function addNearby(btn) {
   const n = DATA.nearby[+btn.dataset.i];
   if (!n || btn.disabled) return;
   edit((l) => l.push({
-    id: uid(), pid: null, kicker: { eat: "Eat", sweet: "Treat", shop: "Shopping" }[n.cat] || "Stop", note: n.note,
+    id: uid(), pid: null, kicker: { eat: "Eat", sweet: "Treat", shop: "Shopping", sight: "Sight" }[n.cat] || "Stop", note: n.note,
     place: { name: n.name, cat: n.cat, lat: n.lat, lng: n.lng, address: n.address },
   }), { fit: true });
   btn.textContent = "Added ✓";
@@ -448,10 +476,10 @@ function renderNearSheet() {
   const chip = (c, label) => `<button data-act="nearCat" data-cat="${c}" class="${nearCat === c ? "on" : ""}">${label}</button>`;
   const far = list.length && list[0].km > 4;
   openSheet(`<h3>Near you now</h3>
-    <div class="chips">${chip("all", "All")}${chip("eat", "Eat")}${chip("sweet", "Sweet")}${chip("shop", "Shop")}</div>
+    <div class="chips">${chip("all", "All")}${chip("eat", "Eat")}${chip("sweet", "Sweet")}${chip("shop", "Shop")}${chip("sight", "Sights")}</div>
     <p class="note" style="margin:6px 0 8px">Live results with ratings and hours, in Google Maps:</p>${gmLinks(nearOrigin.lat, nearOrigin.lng)}
     <p class="note" style="margin:14px 0 0">Our hand-picked favourites:</p>
-    ${far ? `<p class="note">You seem to be far from the Paris list. Distances below are from where you are.</p>` : ""}
+    ${far ? `<p class="note">You seem to be far from the hand-picked list. Distances below are from where you are.</p>` : ""}
     ${nearbyHtml(list)}
     <p class="privacy">Your location stays on your phone. Favourites are a hand-picked list, so check hours before you go.</p>`);
 }
@@ -484,6 +512,30 @@ async function refreshCounts() {
 }
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const toMin = (h, m, ap) => (+h % 12 + (/pm/i.test(ap) ? 12 : 0)) * 60 + +m;
+const fmtMin = (t) => { const h = Math.floor(t / 60), m = t % 60; return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "pm" : "am"}`; };
+function parseRanges(str) {
+  const out = [], re = /(\d{1,2}):(\d{2})\s*(am|pm)\s*[–-]\s*(\d{1,2}):(\d{2})\s*(am|pm)/gi;
+  let m;
+  while ((m = re.exec(str || ""))) out.push([toMin(m[1], m[2], m[3]), toMin(m[4], m[5], m[6])]);
+  return out;
+}
+function parseTime(str) { const m = /(\d{1,2}):(\d{2})\s*(am|pm)/i.exec(str || ""); return m ? toMin(m[1], m[2], m[3]) : null; }
+// compares the time you planned with the opening hours; returns a short warning or ""
+function timeWarn(s, date) {
+  const g = s.pid && DATA.guide && DATA.guide[s.pid];
+  if (!g || !g.hours || typeof g.hours !== "object" || !s.time || !date) return "";
+  const t = parseTime(s.time), v = g.hours[weekday(date)];
+  if (t == null || !v || isClosed(v)) return "";
+  const r = parseRanges(v);
+  if (!r.length || r.some(([a, b]) => t >= a && t < b)) return "";
+  return t < r[0][0] ? `Opens at ${fmtMin(r[0][0])}` : "May be closed at that time";
+}
+function alertFor(pid, date) {
+  const g = pid && DATA.guide && DATA.guide[pid];
+  const a = g && (g.alerts || []).find((x) => date >= x.from && date <= x.to);
+  return a ? a.text : "";
+}
 const weekday = (date) => DOW[new Date(date + "T12:00:00").getDay()];
 const isClosed = (v) => /^closed/i.test(v || "");
 function closedOn(pid, date) {
@@ -512,7 +564,7 @@ function openDetail(stopId) {
   const key = s.pid || "custom:" + s.id;
   detail = { stopId, key };
   const g = (s.pid && DATA.guide && DATA.guide[s.pid]) || {};
-  const q = encodeURIComponent(`${p.name} ${p.address || "Paris"}`);
+  const q = encodeURIComponent(`${p.name} ${p.address || city().name}`);
   const hi = (g.highlights || []).map((h) => `<details><summary><span class="t">${esc(h.title)}</span><span class="by">${esc(h.by || "")}</span></summary><p>${esc(h.story)}</p></details>`).join("");
   const hs = (g.history || []).map((h) => `<div class="story"><h4>${esc(h.title)}</h4><p>${esc(h.text)}</p></div>`).join("");
   $("#detail").innerHTML = `
@@ -526,7 +578,7 @@ function openDetail(stopId) {
       <button class="ghost" data-act="addTicket">+ Add ticket or confirmation (PDF or photo)</button>
       <div id="noteLink"></div>
       <p class="privacy">Saved only on this phone. It is never uploaded. Keep the original in Apple Notes as a backup.</p></section>
-    <section><h3>Opening hours</h3>${hoursHtml(g, d.date)}</section>
+    <section><h3>Opening hours</h3>${alertFor(s.pid, d.date) ? `<div class="callout alert" style="margin-bottom:12px">${esc(alertFor(s.pid, d.date))}</div>` : ""}${hoursHtml(g, d.date)}</section>
     ${hasLoc(p) ? `<section><h3>Nearby to eat and browse</h3><p class="note" style="margin:0 0 8px">Live results with ratings and hours, in Google Maps:</p>${gmLinks(p.lat, p.lng)}<p class="note" style="margin:14px 0 0">Our hand-picked favourites:</p>${nearbyHtml(nearbyList(p.lat, p.lng, { limit: 6, maxKm: 1.2, exclude: p.name }))}<p class="privacy">Favourites are a hand-picked list, so check hours before you go.</p></section>` : ""}
     ${g.tip ? `<section><h3>Tour guide tip</h3><div class="callout">${esc(g.tip)}</div></section>` : ""}
     ${hi ? `<section><h3>Don’t miss</h3>${hi}</section>` : ""}
@@ -645,11 +697,11 @@ function closeViewer() {
 }
 
 // ---------- offline map ----------
-const BBOX = { s: 48.835, w: 2.295, n: 48.885, e: 2.375 };
+const bboxOf = (c) => ({ s: c.bbox[0], w: c.bbox[1], n: c.bbox[2], e: c.bbox[3] });
 const lon2x = (lon, z) => Math.floor(((lon + 180) / 360) * 2 ** z);
 const lat2y = (lat, z) => Math.floor(((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) * 2 ** z);
 function tileUrls() {
-  const out = [];
+  const out = [], BBOX = bboxOf(city());
   for (let z = 12; z <= 16; z++)
     for (let x = lon2x(BBOX.w, z); x <= lon2x(BBOX.e, z); x++)
       for (let y = lat2y(BBOX.n, z); y <= lat2y(BBOX.s, z); y++)
@@ -662,6 +714,7 @@ async function saveTiles() {
   const urls = tileUrls();
   btn.disabled = true;
   const cache = await caches.open("paris-tiles-v1");
+  const cid = cityId;
   let done = 0, failed = 0;
   for (let i = 0; i < urls.length; i += 4) {
     await Promise.all(urls.slice(i, i + 4).map(async (u) => {
@@ -677,13 +730,13 @@ async function saveTiles() {
   }
   btn.disabled = false;
   if (failed) { msg.textContent = `Saved most of the map (${failed} tiles missing). Try again on Wi-Fi.`; return; }
-  store.set("paris.tiles", Date.now());
+  store.set("paris.tiles." + cid, Date.now());
   offlineStatus();
 }
 function offlineStatus() {
-  const t = store.get("paris.tiles");
-  $("#offlineMsg").textContent = t ? "Paris map saved on this phone ✓" : "Tap once on Wi-Fi so the map works without signal.";
-  if (t) $("#offlineBtn").textContent = "Refresh offline map";
+  const t = store.get("paris.tiles." + cityId) || (cityId === "paris" && store.get("paris.tiles"));
+  $("#offlineMsg").textContent = t ? `${city().name} map saved on this phone ✓` : "Tap once on Wi-Fi so the map works without signal.";
+  $("#offlineBtn").textContent = t ? `Refresh ${city().name} offline map` : `Save ${city().name} map for offline`;
 }
 
 boot();

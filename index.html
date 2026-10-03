@@ -6,21 +6,21 @@
 <meta name="theme-color" content="#f5efe4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Paris">
+<meta name="apple-mobile-web-app-title" content="Honeymoon">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="robots" content="noindex, nofollow">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="style.css">
-<title>Paris</title>
+<title>Honeymoon</title>
 </head>
 <body>
 
 <section id="lock" hidden>
   <form id="lockForm" autocomplete="off">
     <p class="eyebrow">Honeymoon · 2026</p>
-    <h1>Paris</h1>
+    <h1>Honeymoon</h1>
     <p class="lede">Enter the password to open the itinerary.</p>
     <input id="pw" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Password" aria-label="Password">
     <label class="remember"><input id="remember" type="checkbox" checked> Remember on this phone</label>
@@ -32,13 +32,16 @@
 <main id="app" hidden>
   <header>
     <p class="eyebrow">Honeymoon · <span id="dates"></span></p>
-    <h1>Paris</h1>
+    <h1 id="cityTitle">Paris</h1>
+    <nav id="cities" aria-label="Cities"></nav>
     <nav id="tabs" aria-label="Days"></nav>
   </header>
 
   <section id="dayHead">
     <h2 id="dayTitle"></h2>
+    <p id="dayNote" class="note"></p>
     <p id="daySummary" class="muted"></p>
+    <div id="heads"></div>
   </section>
 
   <div id="mapWrap"><div id="map"></div><div id="banner" hidden><span id="bannerText"></span><button id="bannerCancel">Cancel</button></div></div>
@@ -49,7 +52,7 @@
   <section id="dayMaps" style="padding:10px 20px 0"></section>
 
   <footer>
-    <button id="offlineBtn" class="ghost">Save Paris map for offline</button>
+    <button id="offlineBtn" class="ghost">Save map for offline</button>
     <p id="offlineMsg" class="muted small"></p>
     <p class="muted small">Walking times are straight-line estimates. Real transit directions arrive in a later phase. Map © OpenStreetMap contributors.</p>
   </footer>

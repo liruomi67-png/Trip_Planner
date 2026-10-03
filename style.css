@@ -195,3 +195,21 @@ button.linkname { background: none; border: 0; padding: 0; text-align: left; fon
 
 .gmrow { display: flex; flex-wrap: wrap; gap: 8px; }
 .gmrow a { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--accent); color: var(--accent); text-decoration: none; font-size: 14px; }
+
+/* cities */
+#cities { display: flex; gap: 8px; margin: 0 0 12px; }
+#cities button { flex: 1; padding: 10px 8px; border-radius: 12px; background: transparent; border: 1px solid var(--line); font-family: var(--serif); font-size: 17px; line-height: 1.2; color: var(--muted); }
+#cities button span { display: block; font: 11px var(--sans); letter-spacing: .06em; margin-top: 2px; }
+#cities button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--card); }
+.headsup { margin-top: 12px; border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; background: var(--card); }
+.headsup .kicker { color: var(--accent); }
+.headsup ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.headsup li { margin: 6px 0; }
+#dayNote:empty { display: none; }
+
+details.headsup { padding: 4px 14px; }
+details.headsup summary { padding: 8px 0; color: var(--accent); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
+details.headsup summary::-webkit-details-marker { display: none; }
+details.headsup summary::after { content: " ▾"; }
+details.headsup[open] summary::after { content: " ▴"; }
+details.headsup ul { margin: 0 0 10px; }

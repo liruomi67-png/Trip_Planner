@@ -1,5 +1,5 @@
 // Service worker: makes the app (and the map you've viewed) work without signal.
-const BUILD = "1791056149";
+const BUILD = "1791058750";
 const SHELL = "paris-shell-" + BUILD;
 const TILES = "paris-tiles-v1"; // kept across app updates
 const FILES = [

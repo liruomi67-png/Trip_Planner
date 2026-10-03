@@ -1,6 +1,6 @@
 {
-  "name": "Paris · Honeymoon",
-  "short_name": "Paris",
+  "name": "Honeymoon",
+  "short_name": "Honeymoon",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
