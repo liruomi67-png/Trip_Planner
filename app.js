@@ -27,7 +27,7 @@ let DATA, map, layer, dayId;
 let state = store.get("paris.state") || { days: {}, checks: {} };
 state.links = state.links || {};
 let pending = null; // "drop a pin" mode: { stopId?, name? }
-let editing = false; // "Edit day" mode shows reorder / swap / remove
+let addAt = null; // where the next added stop goes (index in the day), or null for the end
 
 // ---------- unlock ----------
 async function deriveKey(pw, enc) {
@@ -148,9 +148,10 @@ function start() {
     if (t && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); t.click(); }
   });
   $("#bannerCancel").addEventListener("click", cancelPending);
-  $("#scrim").addEventListener("click", closeSheet);
+  $("#scrim").addEventListener("click", () => { if (Date.now() - sheetOpenedAt > 350) closeSheet(); }); // ignore the tap that opened it
   $("#offlineBtn").addEventListener("click", saveTiles);
   $("#fileIn").addEventListener("change", onFilesChosen);
+  initDrag();
   const bar = $("#datebar");
   addEventListener("scroll", () => bar.classList.toggle("stuck", bar.getBoundingClientRect().top <= 0 && scrollY > 40), { passive: true });
   refreshCounts().then(() => render());
@@ -184,7 +185,6 @@ function render(opts = {}) {
   const c = city(), d = day();
   const departure = d.kind === "departure";
   document.body.dataset.city = c.id;
-  document.body.classList.toggle("editing", editing && !departure);
   document.title = c.name;
   $("#cityTitle").textContent = c.name;
   $("#citySub").textContent = `${c.dates} · ${c.hotel.name}`;
@@ -196,7 +196,7 @@ function render(opts = {}) {
     ? `<details class="headsup"><summary>Planner's notes · ${d.heads.length}</summary><ul>${d.heads.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></details>` : "";
   $("#mapWrap").hidden = departure;
   if (opts.animate) animateIn($("#dayHead"), $("#list"));
-  if (departure) { renderDeparture(d); return; }
+  if (departure) { $("#hint").hidden = true; renderDeparture(d); return; }
 
   const stops = stopsFor(d);
   const pts = [HOTEL()];
@@ -207,6 +207,7 @@ function render(opts = {}) {
       <p class="note">${esc(HOTEL().address)}</p></div></div>`;
   let prev = HOTEL(), prevText = hotelText();
   const routeTexts = [];
+  const addBtn = (at) => `<button class="addhere" data-act="addAt" data-at="${at}" aria-label="Add a stop here">+</button>`;
   stops.forEach((s, i) => {
     const p = placeOf(s);
     const located = hasLoc(p);
@@ -215,13 +216,13 @@ function render(opts = {}) {
       total += w.km;
       const here = mapText(p);
       const far = w.km > 1.5;
-      html += `<div class="leg"><div></div><div class="rail"></div><div class="info">
+      html += `<div class="leg"><div></div><div class="rail">${addBtn(i)}</div><div class="info">
           <span class="walk">${w.min} min on foot · ${fmtKm(w.km)}</span>
           <span class="links"><a class="${far ? "rec" : ""}" href="${esc(dirUrl(prevText, here, "transit"))}" target="_blank" rel="noopener">${far ? "Take transit ↗" : "Transit ↗"}</a><a href="${esc(dirUrl(prevText, here, "walking"))}" target="_blank" rel="noopener">Walk ↗</a></span></div></div>`;
       prev = p; prevText = here; routeTexts.push(here);
       pts.push(p);
     } else {
-      html += `<div class="leg"><div></div><div class="rail"></div><div class="info"><span class="walk">not on the route yet</span></div></div>`;
+      html += `<div class="leg"><div></div><div class="rail">${addBtn(i)}</div><div class="info"><span class="walk">not on the route yet</span></div></div>`;
     }
     const closed = closedOn(s.pid, d.date);
     const warn = timeWarn(s, d.date);
@@ -236,26 +237,23 @@ function render(opts = {}) {
       notice ? `<span class="tag warn">Closure notice</span>` : "",
       p && !located ? `<span class="tag warn">Needs a location</span>` : "",
     ].join("");
-    const tap = p && !editing;
-    html += `<div class="stop${i === stops.length - 1 ? " last" : ""}" id="stop-${s.id}">
-      <div class="when">${splitTime(s.time)}</div>
-      <div class="rail"><span class="dot${p ? "" : " empty"}">${i + 1}</span></div>
-      <div class="body${tap ? " tap" : ""}" ${tap ? `data-act="detail" data-id="${s.id}" role="button" tabindex="0"` : ""}>
+    html += `<div class="stop" id="stop-${s.id}" data-id="${s.id}">
+      <div class="when" data-act="setTime" data-id="${s.id}" role="button" tabindex="0" aria-label="${s.time ? "Change time" : "Add a time"}">${splitTime(s.time)}</div>
+      <div class="rail"><span class="dot grip${p ? "" : " empty"}" data-id="${s.id}" aria-label="Stop ${i + 1}. Drag to reorder, or tap for options">${i + 1}</span></div>
+      <div class="body${p ? " tap" : ""}" ${p ? `data-act="detail" data-id="${s.id}" role="button" tabindex="0"` : ""}>
         <div class="kicker">${esc(s.kicker || "")}</div>
-        <div class="name"><span>${p ? esc(p.name) : `<span class="muted">Open — choose a place</span>`}</span>${tap ? `<span class="chev">›</span>` : ""}</div>
+        <div class="name">${p ? esc(p.name) : `<span class="muted">Open — choose a place</span>`}</div>
         ${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}
         ${tags ? `<div class="tags">${tags}</div>` : ""}
         ${!p || !located ? `<div class="inline-actions">
             <button class="lead" data-act="swap" data-id="${s.id}">${p ? "Change place" : "Choose a place"}</button>
             <button data-act="pin" data-id="${s.id}">Drop a pin</button></div>` : ""}
-        <div class="edit-tools">
-          <button data-act="up" data-id="${s.id}" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
-          <button data-act="down" data-id="${s.id}" aria-label="Move down" ${i === stops.length - 1 ? "disabled" : ""}>↓</button>
-          ${p ? `<button data-act="swap" data-id="${s.id}">Swap</button>` : ""}
-          <button class="del" data-act="remove" data-id="${s.id}">Remove</button>
-        </div>
-      </div></div>`;
+      </div>
+      <button class="more" data-act="menu" data-id="${s.id}" aria-label="Options for ${esc(p ? p.name : "this stop")}">⋯</button>
+    </div>`;
   });
+  html += `<div class="leg addend"><div></div><div class="rail">${addBtn(stops.length)}</div>
+    <div class="info"><button class="addline" data-act="addAt" data-at="${stops.length}">Add a stop</button></div></div>`;
   $("#list").innerHTML = html;
 
   const n = stops.filter((s) => hasLoc(placeOf(s))).length;
@@ -266,14 +264,12 @@ function render(opts = {}) {
   const routeUrl = routeTexts.length
     ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(hotelText())}&destination=${encodeURIComponent(routeTexts[routeTexts.length - 1])}${mids.length ? `&waypoints=${encodeURIComponent(mids.join("|"))}` : ""}&travelmode=walking`
     : "";
-  $("#actions").innerHTML = editing
-    ? `<button class="tool on" data-act="editToggle">${ic("edit")} Done</button>
-       <button class="tool" data-act="add">${ic("plus")} Add a place</button>
-       ${edited ? `<button class="tool quiet" data-act="reset">${ic("reset")} Restore original plan</button>` : ""}`
-    : `<button class="tool" data-act="editToggle">${ic("edit")} Edit day</button>
-       <button class="tool" data-act="add">${ic("plus")} Add</button>
+  $("#actions").innerHTML = `
+       <button class="tool" data-act="addAt" data-at="${stops.length}">${ic("plus")} Add a stop</button>
        <button class="tool" data-act="nearMe">${ic("locate")} Near me</button>
-       ${routeUrl ? `<a class="tool" target="_blank" rel="noopener" href="${esc(routeUrl)}">${ic("route")} Whole day</a>` : ""}`;
+       ${routeUrl ? `<a class="tool" target="_blank" rel="noopener" href="${esc(routeUrl)}">${ic("route")} Whole day</a>` : ""}
+       ${edited ? `<button class="tool quiet" data-act="reset">${ic("reset")} Restore plan</button>` : ""}`;
+  $("#hint").hidden = !!store.raw("paris.hintSeen") || stops.length < 2;
 
   drawMap(stops, pts, opts.fit);
 }
@@ -328,6 +324,7 @@ function onClick(e) {
   const t = e.target.closest("[data-act]");
   if (!t) return;
   const { act, id } = t.dataset;
+  if (t.dataset.close) closeSheet();
   if (act === "city") {
     if (id !== cityId) {
       cityId = id; cancelPending();
@@ -340,13 +337,16 @@ function onClick(e) {
   else if (act === "tab") { dayId = id; store.setRaw("paris.day", id); store.setRaw("paris.day." + cityId, id); cancelPending(); render({ fit: true, animate: true });
     const top = $("#datebar").offsetTop;
     if (scrollY > top) window.scrollTo({ top, behavior: "smooth" }); }
-  else if (act === "editToggle") { editing = !editing; render(); }
+  else if (act === "menu") openMenu(id);
+  else if (act === "setTime") setTime(id);
+  else if (act === "addAt") { store.setRaw("paris.hintSeen", "1"); openAdd(+t.dataset.at); }
+  else if (act === "hideHint") { store.setRaw("paris.hintSeen", "1"); $("#hint").hidden = true; }
   else if (act === "up") edit((l) => move(l, id, -1));
   else if (act === "down") edit((l) => move(l, id, 1));
   else if (act === "remove") { if (confirm("Remove this stop from the day?")) edit((l) => { l.splice(l.findIndex((s) => s.id === id), 1); }, { fit: true }); }
   else if (act === "swap") openSwap(id);
   else if (act === "pin") startPin(id);
-  else if (act === "add") openAdd();
+  else if (act === "add") openAdd(null);
   else if (act === "reset") { if (confirm("Restore this day to the original plan? Your changes to this day will be undone.")) { delete state.days[day().id]; save(); render({ fit: true }); } }
   else if (act === "detail") openDetail(id);
   else if (act === "closeDetail") closeDetail();
@@ -370,12 +370,108 @@ function move(l, id, dir) {
   [l[i], l[j]] = [l[j], l[i]];
 }
 
+// ---------- stop options, time, drag to reorder ----------
+function openMenu(id) {
+  const stops = stopsFor(day());
+  const i = stops.findIndex((x) => x.id === id);
+  if (i < 0) return;
+  const s = stops[i], p = placeOf(s);
+  const b = (act, label, extra = "") => `<button data-act="${act}" data-id="${id}" data-close="1" ${extra}>${label}</button>`;
+  openSheet(`<p class="kicker">Stop ${i + 1}${s.time ? " · " + esc(s.time) : ""}</p><h3>${p ? esc(p.name) : "Open slot"}</h3>
+    <div class="menu">
+      ${p ? b("detail", "Details, tickets & stories") : ""}
+      ${b("swap", p ? "Swap for another place" : "Choose a place")}
+      ${b("setTime", s.time ? "Change the time" : "Add a time")}
+      ${b("up", "Move earlier", i === 0 ? "disabled" : "")}
+      ${b("down", "Move later", i === stops.length - 1 ? "disabled" : "")}
+      <button data-act="addAt" data-at="${i + 1}" data-close="1">Add a stop after this</button>
+      ${b("remove", "Remove from the day", 'class="danger"')}
+    </div>`);
+}
+
+function setTime(id) {
+  const s = stopsFor(day()).find((x) => x.id === id);
+  if (!s) return;
+  const v = prompt("Time for this stop, for example 2:30 pm. Leave empty to clear it.", s.time || "");
+  if (v === null) return;
+  let t = v.trim().toLowerCase().replace(/\s+/g, " ");
+  const h24 = /^([01]?\d|2[0-3])[:.h]([0-5]\d)$/.exec(t);
+  if (h24) { const h = +h24[1]; t = `${h % 12 || 12}:${h24[2]} ${h >= 12 ? "pm" : "am"}`; }
+  t = t.replace(/^(\d{1,2})[.:h](\d{2}) ?(am|pm)$/, "$1:$2 $3");
+  if (t && !/^(1[0-2]|0?[1-9]):[0-5]\d (am|pm)$/.test(t)) { alert("Please write the time like 2:30 pm."); return; }
+  edit((l) => { const x = l.find((y) => y.id === id); if (t) x.time = t.replace(/^0/, ""); else delete x.time; });
+}
+
+// drag a stop's number up or down; a plain tap on the number opens the options
+function initDrag() {
+  $("#list").addEventListener("pointerdown", (e) => {
+    const g = e.target.closest(".grip");
+    const row = g && g.closest(".stop[data-id]");
+    if (!row || e.button > 0) return;
+    e.preventDefault();
+    const rows = [...document.querySelectorAll("#list .stop[data-id]")];
+    const from = rows.indexOf(row);
+    const others = rows.filter((r) => r !== row);
+    const mids = rows.map((r) => { const b = r.getBoundingClientRect(); return b.top + scrollY + b.height / 2; });
+    const startY = e.clientY + scrollY;
+    let lastY = e.clientY, moved = false, to = from, raf = 0;
+    try { g.setPointerCapture(e.pointerId); } catch {}
+
+    const update = () => {
+      const dy = lastY + scrollY - startY;
+      if (!moved && Math.abs(dy) < 6) return;
+      if (!moved) { moved = true; row.classList.add("dragging"); document.body.classList.add("drag-active"); if (navigator.vibrate) navigator.vibrate(8); }
+      row.style.transform = `translateY(${dy}px)`;
+      const center = mids[from] + dy;
+      to = mids.filter((m, j) => j !== from && m < center).length;
+      others.forEach((r) => r.classList.remove("drop-before", "drop-after"));
+      if (to !== from) {
+        if (to < others.length) others[to].classList.add("drop-before");
+        else others[others.length - 1].classList.add("drop-after");
+      }
+    };
+    const loop = () => {   // gently scroll when the finger nears the top or bottom edge
+      if (!moved) { raf = requestAnimationFrame(loop); return; }
+      const edge = 90, top = 70;
+      if (lastY < top + edge) scrollBy(0, -Math.ceil((top + edge - lastY) / 8));
+      else if (lastY > innerHeight - edge) scrollBy(0, Math.ceil((lastY - innerHeight + edge) / 8));
+      update();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    const onMove = (ev) => { lastY = ev.clientY; update(); };
+    const finish = (ev, cancelled) => {
+      cancelAnimationFrame(raf);
+      g.removeEventListener("pointermove", onMove);
+      g.removeEventListener("pointerup", onUp);
+      g.removeEventListener("pointercancel", onCancel);
+      row.style.transform = "";
+      row.classList.remove("dragging");
+      document.body.classList.remove("drag-active");
+      others.forEach((r) => r.classList.remove("drop-before", "drop-after"));
+      if (cancelled) return;
+      if (!moved) { openMenu(row.dataset.id); return; }
+      if (to !== from) {
+        store.setRaw("paris.hintSeen", "1");
+        edit((l) => { const [x] = l.splice(from, 1); l.splice(to, 0, x); });
+      }
+    };
+    const onUp = (ev) => finish(ev, false);
+    const onCancel = (ev) => finish(ev, true);
+    g.addEventListener("pointermove", onMove);
+    g.addEventListener("pointerup", onUp);
+    g.addEventListener("pointercancel", onCancel);
+  });
+}
+
 // ---------- pickers ----------
 function openSheet(html) {
   $("#sheet").innerHTML = html + `<button class="sheetClose" data-sheet="close">Close</button>`;
   $("#sheet").hidden = false; $("#scrim").hidden = false;
+  sheetOpenedAt = Date.now();
   $("#sheet").querySelector("[data-sheet=close]").addEventListener("click", closeSheet);
 }
+let sheetOpenedAt = 0;
 function closeSheet() { $("#sheet").hidden = true; $("#scrim").hidden = true; }
 
 const catLabel = { sight: "Sight", food: "Eat", shop: "Shop" };
@@ -405,13 +501,19 @@ function picker({ title, alts = [], onPick, allowPin }) {
   });
 }
 
-function openAdd() {
+const insertStop = (l, x) => {
+  const at = addAt == null || addAt > l.length ? l.length : addAt;
+  l.splice(at, 0, x);
+  addAt = null;
+};
+function openAdd(at) {
+  addAt = at == null || Number.isNaN(at) ? null : at;
   picker({
     title: "Add a place", allowPin: true,
     onPick: (pid) => {
       if (pid === "__pin") return startPin(null);
       if (pid === "__gmaps") return pasteMapsLink(null);
-      edit((l) => l.push({ id: uid(), pid, kicker: kickerFor(DATA.places[pid]), note: "" }), { fit: true });
+      edit((l) => insertStop(l, { id: uid(), pid, kicker: kickerFor(DATA.places[pid]), note: "" }), { fit: true });
     },
   });
 }
@@ -462,7 +564,7 @@ function pasteMapsLink(stopId) {
   const place = { name: r.name, cat: "sight", lat: +r.lat.toFixed(5), lng: +r.lng.toFixed(5) };
   edit((l) => {
     if (stopId) { const t = l.find((x) => x.id === stopId); t.place = place; t.pid = null; t.alts = t.alts || []; }
-    else l.push({ id: uid(), pid: null, place, kicker: "From Maps", note: "" });
+    else insertStop(l, { id: uid(), pid: null, place, kicker: "From Maps", note: "" });
   }, { fit: true });
 }
 
@@ -477,7 +579,7 @@ function startPin(stopId) {
   $("#banner").hidden = false;
   $("#mapWrap").scrollIntoView({ behavior: "smooth", block: "start" });
 }
-function cancelPending() { pending = null; $("#banner").hidden = true; }
+function cancelPending() { if (pending) addAt = null; pending = null; $("#banner").hidden = true; }
 function onMapClick(e) {
   if (!pending) return;
   const { stopId, name } = pending;
@@ -485,7 +587,7 @@ function onMapClick(e) {
   cancelPending();
   edit((l) => {
     if (stopId) { const t = l.find((x) => x.id === stopId); t.place = place; t.pid = null; }
-    else l.push({ id: uid(), pid: null, place, kicker: "Custom", note: "" });
+    else insertStop(l, { id: uid(), pid: null, place, kicker: "Custom", note: "" });
   }, { fit: true });
 }
 
