@@ -13,6 +13,7 @@ const store = {
 
 let DATA, map, layer, dayId;
 let state = store.get("paris.state") || { days: {}, checks: {} };
+state.links = state.links || {};
 let pending = null; // "drop a pin" mode: { stopId?, name? }
 
 // ---------- unlock ----------
@@ -237,6 +238,8 @@ function onClick(e) {
   else if (act === "detail") openDetail(id);
   else if (act === "closeDetail") closeDetail();
   else if (act === "addTicket") { $("#fileIn").value = ""; $("#fileIn").click(); }
+  else if (act === "setLink") setNoteLink();
+  else if (act === "delLink") { delete state.links[detail.key]; save(); renderNoteLink(); }
   else if (act === "viewTicket") viewTicket(id);
   else if (act === "delTicket") delTicket(id);
   else if (act === "closeViewer") closeViewer();
@@ -404,6 +407,7 @@ function openDetail(stopId) {
     ${s.time ? `<div><span class="chip">${esc(s.time)}${s.timeLabel ? " · " + esc(s.timeLabel) : ""}</span></div>` : ""}
     <section><h3>Your ticket</h3><div id="tickets"></div>
       <button class="ghost" data-act="addTicket">+ Add ticket or confirmation (PDF or photo)</button>
+      <div id="noteLink"></div>
       <p class="privacy">Saved only on this phone. It is never uploaded. Keep the original in Apple Notes as a backup.</p></section>
     <section><h3>Opening hours</h3>${hoursHtml(g, d.date)}</section>
     ${g.tip ? `<section><h3>Tour guide tip</h3><div class="callout">${esc(g.tip)}</div></section>` : ""}
@@ -411,6 +415,7 @@ function openDetail(stopId) {
     ${hs ? `<section><h3>Stories and history</h3>${hs}</section>` : ""}
     ${!hi && !hs ? `<section><h3>Stories</h3><p class="muted">No stories for this place yet.</p></section>` : ""}
     <p class="verify">Hours come from public listings checked in October 2026. Stories are curated from general art-history knowledge. Confirm hours on the official site before you go.</p>`;
+  renderNoteLink();
   $("#detail").hidden = false;
   $("#detail").scrollTop = 0;
   document.body.style.overflow = "hidden";
@@ -432,6 +437,24 @@ async function renderTickets() {
   el.innerHTML = list.length
     ? list.map((t) => `<div class="ticket"><span class="tname">${esc(t.name)}</span><button class="open" data-act="viewTicket" data-id="${t.id}">Open</button><button data-act="delTicket" data-id="${t.id}">Remove</button></div>`).join("")
     : `<p class="muted">No ticket added yet.</p>`;
+}
+
+function renderNoteLink() {
+  const el = $("#noteLink");
+  if (!el || !detail) return;
+  const url = state.links[detail.key];
+  el.innerHTML = url
+    ? `<div class="ticket"><span class="tname">Apple Note link</span><a class="maplink" style="margin:0" href="${esc(url)}" target="_blank" rel="noopener">Open note ↗</a><button data-act="delLink">Remove</button></div>
+       <p class="privacy">Needs a signal. Use the saved file above for offline.</p>`
+    : `<button class="ghost plain" style="margin-top:8px;width:100%;border-color:var(--line);color:var(--muted)" data-act="setLink">Or link to the Apple Note</button>`;
+}
+function setNoteLink() {
+  const v = (prompt("Paste the Apple Notes link (in Notes: Share → Copy Link)") || "").trim();
+  if (!v) return;
+  if (!/^(https:\/\/|mobilenotes:\/\/)/i.test(v)) { alert("That doesn’t look like a link. It should start with https://"); return; }
+  state.links[detail.key] = v;
+  save();
+  renderNoteLink();
 }
 
 async function onFilesChosen(e) {
