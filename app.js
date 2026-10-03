@@ -150,7 +150,8 @@ function render(opts = {}) {
     }
     const name = p ? p.name : "Open slot";
     const closed = closedOn(s.pid, d.date);
-    const tk = ticketCounts[s.pid || "custom:" + s.id] || 0;
+    const tkKey = s.pid || "custom:" + s.id;
+    const tk = (ticketCounts[tkKey] || 0) + (state.links[tkKey] ? 1 : 0);
     html += `<div class="stop" id="stop-${s.id}"><div class="num">${i + 1}</div><div>
       <div class="kicker">${esc(s.kicker || "")}</div>
       ${p ? `<button class="name linkname" data-act="detail" data-id="${s.id}">${esc(name)}</button>` : `<div class="name">${esc(name)}</div>`}
@@ -239,7 +240,7 @@ function onClick(e) {
   else if (act === "closeDetail") closeDetail();
   else if (act === "addTicket") { $("#fileIn").value = ""; $("#fileIn").click(); }
   else if (act === "setLink") setNoteLink();
-  else if (act === "delLink") { delete state.links[detail.key]; save(); renderNoteLink(); }
+  else if (act === "delLink") { delete state.links[detail.key]; save(); renderNoteLink(); renderTickets(); }
   else if (act === "viewTicket") viewTicket(id);
   else if (act === "delTicket") delTicket(id);
   else if (act === "closeViewer") closeViewer();
@@ -436,7 +437,9 @@ async function renderTickets() {
   catch { el.innerHTML = `<p class="muted">This browser mode can’t save tickets. Open the app from your Home Screen icon.</p>`; return; }
   el.innerHTML = list.length
     ? list.map((t) => `<div class="ticket"><span class="tname">${esc(t.name)}</span><button class="open" data-act="viewTicket" data-id="${t.id}">Open</button><button data-act="delTicket" data-id="${t.id}">Remove</button></div>`).join("")
-    : `<p class="muted">No ticket added yet.</p>`;
+    : state.links[detail.key]
+      ? `<p>Ticket added. It’s in your Apple Note, linked below.</p>`
+      : `<p class="muted">No ticket added yet.</p>`;
 }
 
 function renderNoteLink() {
@@ -455,6 +458,7 @@ function setNoteLink() {
   state.links[detail.key] = v;
   save();
   renderNoteLink();
+  renderTickets();
 }
 
 async function onFilesChosen(e) {

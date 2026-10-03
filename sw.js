@@ -1,5 +1,5 @@
 // Service worker: makes the app (and the map you've viewed) work without signal.
-const BUILD = "1791054393";
+const BUILD = "1791055360";
 const SHELL = "paris-shell-" + BUILD;
 const TILES = "paris-tiles-v1"; // kept across app updates
 const FILES = [
@@ -44,7 +44,7 @@ self.addEventListener("fetch", (e) => {
   // Our own files: newest version when online, saved copy when offline.
   if (url.origin === location.origin) {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" }) // skip the host's 10-minute cache so updates show up promptly
         .then((res) => {
           if (res.ok) { const copy = res.clone(); caches.open(SHELL).then((c) => c.put(req, copy)); }
           return res;
