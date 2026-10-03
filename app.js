@@ -107,6 +107,8 @@ function start() {
   $("#bannerCancel").addEventListener("click", cancelPending);
   $("#scrim").addEventListener("click", closeSheet);
   $("#offlineBtn").addEventListener("click", saveTiles);
+  $("#fileIn").addEventListener("change", onFilesChosen);
+  refreshCounts().then(() => render());
   render({ fit: true });
   offlineStatus();
 }
@@ -146,16 +148,20 @@ function render(opts = {}) {
       html += `<div class="leg">Not on the route yet</div>`;
     }
     const name = p ? p.name : "Open slot";
+    const closed = closedOn(s.pid, d.date);
+    const tk = ticketCounts[s.pid || "custom:" + s.id] || 0;
     html += `<div class="stop" id="stop-${s.id}"><div class="num">${i + 1}</div><div>
       <div class="kicker">${esc(s.kicker || "")}</div>
-      <div class="name">${esc(name)}</div>
+      ${p ? `<button class="name linkname" data-act="detail" data-id="${s.id}">${esc(name)}</button>` : `<div class="name">${esc(name)}</div>`}
       ${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}
       ${s.time ? `<span class="chip">${esc(s.time)}${s.timeLabel ? " · " + esc(s.timeLabel) : ""}</span>` : ""}
+      ${tk ? `<span class="chip">Ticket saved</span>` : ""}
+      ${closed ? `<span class="chip warn">Closed this day</span>` : ""}
       ${!located ? `<span class="chip warn">Needs a location</span>` : ""}
       <div class="tools">
         <button data-act="up" data-id="${s.id}" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
         <button data-act="down" data-id="${s.id}" aria-label="Move down" ${i === stops.length - 1 ? "disabled" : ""}>↓</button>
-        ${p ? `<button data-act="swap" data-id="${s.id}">Swap</button>` : `<button class="text" data-act="swap" data-id="${s.id}">Choose place</button>`}
+        ${p ? `<button data-act="swap" data-id="${s.id}">Swap</button><button class="text" data-act="detail" data-id="${s.id}">Details</button>` : `<button class="text" data-act="swap" data-id="${s.id}">Choose place</button>`}
         ${!located ? `<button class="text" data-act="pin" data-id="${s.id}">Pin on map</button>` : ""}
         <button data-act="remove" data-id="${s.id}" aria-label="Remove">✕</button>
       </div></div></div>`;
@@ -228,6 +234,12 @@ function onClick(e) {
   else if (act === "pin") startPin(id);
   else if (act === "add") openAdd();
   else if (act === "reset") { delete state.days[day().id]; save(); render({ fit: true }); }
+  else if (act === "detail") openDetail(id);
+  else if (act === "closeDetail") closeDetail();
+  else if (act === "addTicket") { $("#fileIn").value = ""; $("#fileIn").click(); }
+  else if (act === "viewTicket") viewTicket(id);
+  else if (act === "delTicket") delTicket(id);
+  else if (act === "closeViewer") closeViewer();
   else if (act === "check") {
     const d = day(); state.checks[d.id] = state.checks[d.id] || {};
     state.checks[d.id][t.dataset.i] = t.checked; save();
@@ -322,6 +334,170 @@ function onMapClick(e) {
     if (stopId) { const t = l.find((x) => x.id === stopId); t.place = place; t.pid = null; }
     else l.push({ id: uid(), pid: null, place, kicker: "Custom", note: "" });
   }, { fit: true });
+}
+
+// ---------- tickets (kept in this phone's browser storage only) ----------
+let ticketCounts = {};
+let detail = null; // { stopId, key }
+const openDb = () => new Promise((res, rej) => {
+  const r = indexedDB.open("paris-tickets", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("files", { keyPath: "id" }).createIndex("key", "key");
+  r.onsuccess = () => res(r.result);
+  r.onerror = () => rej(r.error);
+});
+const withStore = async (mode, fn) => {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const t = db.transaction("files", mode);
+    const req = fn(t.objectStore("files"));
+    t.oncomplete = () => { db.close(); res(req && req.result); };
+    t.onerror = t.onabort = () => { db.close(); rej(t.error); };
+  });
+};
+const ticketsFor = (key) => withStore("readonly", (s) => s.index("key").getAll(key)).then((r) => r || []);
+async function refreshCounts() {
+  try {
+    const all = await withStore("readonly", (s) => s.getAll());
+    ticketCounts = {};
+    (all || []).forEach((r) => { ticketCounts[r.key] = (ticketCounts[r.key] || 0) + 1; });
+  } catch {}
+}
+
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const weekday = (date) => DOW[new Date(date + "T12:00:00").getDay()];
+const isClosed = (v) => /^closed/i.test(v || "");
+function closedOn(pid, date) {
+  const g = pid && DATA.guide && DATA.guide[pid];
+  return !!(g && date && g.hours && typeof g.hours === "object" && isClosed(g.hours[weekday(date)]));
+}
+
+function hoursHtml(g, date) {
+  if (!g.hours) return `<p class="muted">Hours not added yet.</p>`;
+  if (typeof g.hours === "string") return `<p>${esc(g.hours)}</p>`;
+  const wd = weekday(date);
+  const label = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const today = g.hours[wd];
+  const rows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((k) =>
+    `<tr class="${k === wd ? "today" : ""} ${isClosed(g.hours[k]) ? "closed" : ""}"><td>${k}</td><td>${esc(g.hours[k])}</td></tr>`).join("");
+  return `<div class="callout ${isClosed(today) ? "alert" : ""}">${isClosed(today) ? `Closed on ${esc(label)}. Pick another day or swap this stop.` : `On ${esc(label)}: ${esc(today)}`}</div>
+    <table class="hours" style="margin-top:12px">${rows}</table>
+    ${g.hoursNote ? `<p class="privacy">${esc(g.hoursNote)}</p>` : ""}`;
+}
+
+function openDetail(stopId) {
+  const d = day();
+  const s = stopsFor(d).find((x) => x.id === stopId);
+  const p = s && placeOf(s);
+  if (!p) return;
+  const key = s.pid || "custom:" + s.id;
+  detail = { stopId, key };
+  const g = (s.pid && DATA.guide && DATA.guide[s.pid]) || {};
+  const q = encodeURIComponent(`${p.name} ${p.address || "Paris"}`);
+  const hi = (g.highlights || []).map((h) => `<details><summary><span class="t">${esc(h.title)}</span><span class="by">${esc(h.by || "")}</span></summary><p>${esc(h.story)}</p></details>`).join("");
+  const hs = (g.history || []).map((h) => `<div class="story"><h4>${esc(h.title)}</h4><p>${esc(h.text)}</p></div>`).join("");
+  $("#detail").innerHTML = `
+    <button class="back" data-act="closeDetail">← Back to the day</button>
+    <div class="kicker">${esc(s.kicker || "")}</div>
+    <h2>${esc(p.name)}</h2>
+    ${p.address ? `<div class="muted">${esc(p.address)}</div>` : ""}
+    <a class="maplink" href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Open in Google Maps ↗</a>
+    ${s.time ? `<div><span class="chip">${esc(s.time)}${s.timeLabel ? " · " + esc(s.timeLabel) : ""}</span></div>` : ""}
+    <section><h3>Your ticket</h3><div id="tickets"></div>
+      <button class="ghost" data-act="addTicket">+ Add ticket or confirmation (PDF or photo)</button>
+      <p class="privacy">Saved only on this phone. It is never uploaded. Keep the original in Apple Notes as a backup.</p></section>
+    <section><h3>Opening hours</h3>${hoursHtml(g, d.date)}</section>
+    ${g.tip ? `<section><h3>Tour guide tip</h3><div class="callout">${esc(g.tip)}</div></section>` : ""}
+    ${hi ? `<section><h3>Don’t miss</h3>${hi}</section>` : ""}
+    ${hs ? `<section><h3>Stories and history</h3>${hs}</section>` : ""}
+    ${!hi && !hs ? `<section><h3>Stories</h3><p class="muted">No stories for this place yet.</p></section>` : ""}
+    <p class="verify">Hours come from public listings checked in October 2026. Stories are curated from general art-history knowledge. Confirm hours on the official site before you go.</p>`;
+  $("#detail").hidden = false;
+  $("#detail").scrollTop = 0;
+  document.body.style.overflow = "hidden";
+  renderTickets();
+}
+function closeDetail() {
+  $("#detail").hidden = true;
+  document.body.style.overflow = "";
+  detail = null;
+  refreshCounts().then(() => render());
+}
+
+async function renderTickets() {
+  const el = $("#tickets");
+  if (!el || !detail) return;
+  let list;
+  try { list = await ticketsFor(detail.key); }
+  catch { el.innerHTML = `<p class="muted">This browser mode can’t save tickets. Open the app from your Home Screen icon.</p>`; return; }
+  el.innerHTML = list.length
+    ? list.map((t) => `<div class="ticket"><span class="tname">${esc(t.name)}</span><button class="open" data-act="viewTicket" data-id="${t.id}">Open</button><button data-act="delTicket" data-id="${t.id}">Remove</button></div>`).join("")
+    : `<p class="muted">No ticket added yet.</p>`;
+}
+
+async function onFilesChosen(e) {
+  const files = [...e.target.files];
+  if (!files.length || !detail) return;
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+  try {
+    for (const f of files) {
+      // store the bytes (more reliable on iPhone than storing the File object)
+      const data = await f.arrayBuffer();
+      await withStore("readwrite", (s) => s.put({ id: uid(), key: detail.key, name: f.name, type: f.type, data, added: Date.now() }));
+    }
+  } catch { alert("Could not save that file on this phone."); }
+  await refreshCounts();
+  renderTickets();
+}
+
+async function delTicket(id) {
+  if (!confirm("Remove this ticket from the app? Your original in Notes is untouched.")) return;
+  await withStore("readwrite", (s) => s.delete(id));
+  await refreshCounts();
+  renderTickets();
+}
+
+let viewerUrl = null;
+const loadScript = (src) => new Promise((res, rej) => {
+  if (window.pdfjsLib) return res();
+  const el = document.createElement("script");
+  el.src = src; el.onload = res; el.onerror = rej;
+  document.head.appendChild(el);
+});
+async function viewTicket(id) {
+  const rec = await withStore("readonly", (s) => s.get(id));
+  if (!rec) return;
+  const body = $("#viewerBody");
+  $("#viewerName").textContent = rec.name;
+  body.innerHTML = `<div class="vmsg">Raise your screen brightness before scanning.</div>`;
+  $("#viewer").hidden = false;
+  const isPdf = rec.type === "application/pdf" || /\.pdf$/i.test(rec.name);
+  try {
+    if (isPdf) {
+      await loadScript("vendor/pdf.min.js");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(rec.data.slice(0)) }).promise;
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const w = body.clientWidth || 360, dpr = window.devicePixelRatio || 1;
+        const base = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: Math.min(3, (w * dpr) / base.width) });
+        const c = document.createElement("canvas");
+        c.width = vp.width; c.height = vp.height;
+        body.appendChild(c);
+        await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+      }
+    } else {
+      viewerUrl = URL.createObjectURL(new Blob([rec.data], { type: rec.type || "image/jpeg" }));
+      const img = document.createElement("img");
+      img.src = viewerUrl;
+      body.appendChild(img);
+    }
+  } catch { body.innerHTML = `<div class="vmsg">Could not open this file.</div>`; }
+}
+function closeViewer() {
+  $("#viewer").hidden = true;
+  $("#viewerBody").innerHTML = "";
+  if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
 }
 
 // ---------- offline map ----------

@@ -1,10 +1,11 @@
 // Service worker: makes the app (and the map you've viewed) work without signal.
-const BUILD = "1791051296";
+const BUILD = "1791053492";
 const SHELL = "paris-shell-" + BUILD;
 const TILES = "paris-tiles-v1"; // kept across app updates
 const FILES = [
   "./", "index.html", "style.css", "app.js", "manifest.webmanifest",
   "icon-180.png", "icon-192.png", "vendor/leaflet.js", "vendor/leaflet.css", "data.enc.json",
+  "vendor/pdf.min.js", "vendor/pdf.worker.min.js",
 ];
 
 self.addEventListener("install", (e) => {
