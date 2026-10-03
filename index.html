@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f5efe4">
+<meta name="theme-color" content="#f6f1e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15130f" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Honeymoon">
@@ -11,56 +12,61 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preload" href="fonts/cormorant-italic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="style.css">
 <title>Honeymoon</title>
 </head>
-<body>
+<body data-city="paris">
 
 <section id="lock" hidden>
   <form id="lockForm" autocomplete="off">
-    <p class="eyebrow">Honeymoon · 2026</p>
+    <p class="eyebrow">November 2026</p>
     <h1>Honeymoon</h1>
-    <p class="lede">Enter the password to open the itinerary.</p>
-    <input id="pw" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Password" aria-label="Password">
+    <p class="cities-line">Paris · Florence · Rome</p>
+    <p class="ornament">✦ ✦ ✦</p>
+    <input id="pw" type="password" inputmode="numeric" autocomplete="current-password" placeholder="······" aria-label="Password">
     <label class="remember"><input id="remember" type="checkbox" checked> Remember on this phone</label>
-    <button class="primary" type="submit">Open</button>
+    <button class="primary" type="submit">Open the journal</button>
     <p id="lockMsg" class="msg" role="alert"></p>
   </form>
 </section>
 
 <main id="app" hidden>
-  <header>
-    <p class="eyebrow">Honeymoon · <span id="dates"></span></p>
+  <header class="masthead">
+    <div class="mast-top"><span class="eyebrow">The Honeymoon</span><span class="eyebrow" id="dates"></span></div>
     <h1 id="cityTitle">Paris</h1>
+    <p id="citySub"></p>
     <nav id="cities" aria-label="Cities"></nav>
-    <nav id="tabs" aria-label="Days"></nav>
   </header>
 
+  <div class="datebar" id="datebar"><nav id="tabs" aria-label="Days"></nav></div>
+
   <section id="dayHead">
-    <h2 id="dayTitle"></h2>
-    <p id="dayNote" class="note"></p>
-    <p id="daySummary" class="muted"></p>
+    <div class="dayline"><span class="daynum" id="dayNum"></span>
+      <div><p class="eyebrow" id="dayDate"></p><h2 id="dayTitle"></h2></div></div>
+    <p id="dayNote"></p>
+    <p id="daySummary"></p>
     <div id="heads"></div>
   </section>
 
   <div id="mapWrap"><div id="map"></div><div id="banner" hidden><span id="bannerText"></span><button id="bannerCancel">Cancel</button></div></div>
 
+  <section id="actions"></section>
+
   <section id="list"></section>
 
-  <section id="actions"></section>
-  <section id="dayMaps" style="padding:10px 20px 0"></section>
-
   <footer>
-    <button id="offlineBtn" class="ghost">Save map for offline</button>
-    <p id="offlineMsg" class="muted small"></p>
-    <p class="muted small">Walking times are straight-line estimates. Real transit directions arrive in a later phase. Map © OpenStreetMap contributors.</p>
+    <button id="offlineBtn" class="tool">Save map for offline</button>
+    <p id="offlineMsg" class="fine"></p>
+    <p class="fine">Walking times are straight-line estimates. Directions and live results open in Google Maps. Map © OpenStreetMap contributors.</p>
+    <p class="fin">— fin —</p>
   </footer>
 </main>
 
 <section id="detail" hidden></section>
 <section id="viewer" hidden>
-  <div id="viewerBar"><button data-act="closeViewer" class="ghost">Close</button><span id="viewerName"></span></div>
+  <div id="viewerBar"><button data-act="closeViewer" class="tool">Close</button><span id="viewerName"></span></div>
   <div id="viewerBody"></div>
 </section>
 <input id="fileIn" type="file" accept="application/pdf,image/*" multiple hidden>

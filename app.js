@@ -1,6 +1,18 @@
 (() => {
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const SVG = {
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  locate: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7.5"/>',
+  route: '<circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/>',
+  out: '<path d="M7 17L17 7M9 7h8v8"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  reset: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/>',
+  ticket: '<path d="M3 8a2 2 0 0 0 0 4v4h18v-4a2 2 0 0 0 0-4V4H3z" transform="translate(0 2)"/>',
+  map: '<path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
+};
+const ic = (n) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${SVG[n] || ""}</svg>`;
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const toB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const store = {
@@ -15,6 +27,7 @@ let DATA, map, layer, dayId;
 let state = store.get("paris.state") || { days: {}, checks: {} };
 state.links = state.links || {};
 let pending = null; // "drop a pin" mode: { stopId?, name? }
+let editing = false; // "Edit day" mode shows reorder / swap / remove
 
 // ---------- unlock ----------
 async function deriveKey(pw, enc) {
@@ -130,43 +143,67 @@ function start() {
   map.on("click", onMapClick);
 
   document.addEventListener("click", onClick);
+  document.addEventListener("keydown", (e) => {
+    const t = e.target.closest && e.target.closest('[role="button"][data-act]');
+    if (t && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); t.click(); }
+  });
   $("#bannerCancel").addEventListener("click", cancelPending);
   $("#scrim").addEventListener("click", closeSheet);
   $("#offlineBtn").addEventListener("click", saveTiles);
   $("#fileIn").addEventListener("change", onFilesChosen);
+  const bar = $("#datebar");
+  addEventListener("scroll", () => bar.classList.toggle("stuck", bar.getBoundingClientRect().top <= 0 && scrollY > 40), { passive: true });
   refreshCounts().then(() => render());
-  render({ fit: true });
+  render({ fit: true, animate: true });
   offlineStatus();
+}
+
+const dateObj = (d) => new Date(d.date + "T12:00:00");
+const fmtDate = (d, o) => dateObj(d).toLocaleDateString("en-US", o);
+function splitTime(t) {
+  const m = /^(\d{1,2}:\d{2})\s*(am|pm)$/i.exec((t || "").trim());
+  return m ? `${m[1]}<small>${m[2]}</small>` : "";
 }
 
 function renderTabs() {
   $("#cities").innerHTML = DATA.cities.map((c) =>
-    `<button data-act="city" data-id="${c.id}" aria-pressed="${c.id === cityId}">${esc(c.name)}<span>${esc(c.dates)}</span></button>`).join("");
+    `<button data-act="city" data-id="${c.id}" aria-pressed="${c.id === cityId}">${esc(c.name)}</button>`).join("");
   $("#tabs").innerHTML = city().days.map((d) =>
-    `<button role="tab" data-act="tab" data-id="${d.id}" aria-selected="${d.id === dayId}">${esc(d.tab)}</button>`).join("");
+    `<button role="tab" data-act="tab" data-id="${d.id}" aria-selected="${d.id === dayId}">
+       <span class="dow">${d.kind === "departure" ? "✈ " : ""}${esc(fmtDate(d, { weekday: "short" }))}</span><span class="dnum">${dateObj(d).getDate()}</span></button>`).join("");
+  const on = $("#tabs [aria-selected=true]");
+  if (on) on.scrollIntoView({ block: "nearest", inline: "center" });
+}
+
+function animateIn(...els) {
+  els.forEach((el) => { el.classList.remove("enter"); void el.offsetWidth; el.classList.add("enter"); });
 }
 
 function render(opts = {}) {
   renderTabs();
-  const d = day();
+  const c = city(), d = day();
   const departure = d.kind === "departure";
+  document.body.dataset.city = c.id;
+  document.body.classList.toggle("editing", editing && !departure);
+  document.title = c.name;
+  $("#cityTitle").textContent = c.name;
+  $("#citySub").textContent = `${c.dates} · ${c.hotel.name}`;
+  $("#dayNum").textContent = dateObj(d).getDate();
+  $("#dayDate").textContent = `${fmtDate(d, { weekday: "long" })} · ${fmtDate(d, { month: "long" })}`;
   $("#dayTitle").textContent = d.title;
-  $("#cityTitle").textContent = city().name;
-  document.title = city().name;
   $("#dayNote").textContent = d.note || "";
   $("#heads").innerHTML = (d.heads || []).length
-    ? `<details class="headsup"><summary>Worth checking · ${d.heads.length}</summary><ul>${d.heads.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></details>` : "";
+    ? `<details class="headsup"><summary>Planner's notes · ${d.heads.length}</summary><ul>${d.heads.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></details>` : "";
   $("#mapWrap").hidden = departure;
-  $("#dayMaps").innerHTML = "";
+  if (opts.animate) animateIn($("#dayHead"), $("#list"));
   if (departure) { renderDeparture(d); return; }
 
   const stops = stopsFor(d);
   const pts = [HOTEL()];
   let total = 0;
 
-  // list
-  let html = `<div class="stop"><div class="num h">H</div><div>
-      <div class="kicker">Start</div><div class="name">${esc(HOTEL().name)}</div>
+  let html = `<div class="stop start"><div class="when"></div><div class="rail"><span class="dot h">H</span></div>
+      <div class="body"><div class="kicker">Start · your hotel</div><div class="name">${esc(HOTEL().name)}</div>
       <p class="note">${esc(HOTEL().address)}</p></div></div>`;
   let prev = HOTEL(), prevText = hotelText();
   const routeTexts = [];
@@ -177,51 +214,66 @@ function render(opts = {}) {
       const w = walk(prev, p);
       total += w.km;
       const here = mapText(p);
-      html += `<div class="leg"><span>${fmtKm(w.km)} · about ${w.min} min on foot${w.km > 1.5 ? " · transit may be quicker" : ""}</span>
-        <span class="legLinks"><a href="${esc(dirUrl(prevText, here, "transit"))}" target="_blank" rel="noopener">Transit ↗</a><a href="${esc(dirUrl(prevText, here, "walking"))}" target="_blank" rel="noopener">Walk ↗</a></span></div>`;
+      const far = w.km > 1.5;
+      html += `<div class="leg"><div></div><div class="rail"></div><div class="info">
+          <span class="walk">${w.min} min on foot · ${fmtKm(w.km)}</span>
+          <span class="links"><a class="${far ? "rec" : ""}" href="${esc(dirUrl(prevText, here, "transit"))}" target="_blank" rel="noopener">${far ? "Take transit ↗" : "Transit ↗"}</a><a href="${esc(dirUrl(prevText, here, "walking"))}" target="_blank" rel="noopener">Walk ↗</a></span></div></div>`;
       prev = p; prevText = here; routeTexts.push(here);
       pts.push(p);
     } else {
-      html += `<div class="leg">Not on the route yet</div>`;
+      html += `<div class="leg"><div></div><div class="rail"></div><div class="info"><span class="walk">not on the route yet</span></div></div>`;
     }
-    const name = p ? p.name : "Open slot";
     const closed = closedOn(s.pid, d.date);
     const warn = timeWarn(s, d.date);
     const notice = alertFor(s.pid, d.date);
     const tkKey = s.pid || "custom:" + s.id;
     const tk = (ticketCounts[tkKey] || 0) + (state.links[tkKey] ? 1 : 0);
-    html += `<div class="stop" id="stop-${s.id}"><div class="num">${i + 1}</div><div>
-      <div class="kicker">${esc(s.kicker || "")}</div>
-      ${p ? `<button class="name linkname" data-act="detail" data-id="${s.id}">${esc(name)}</button>` : `<div class="name">${esc(name)}</div>`}
-      ${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}
-      ${s.time ? `<span class="chip">${esc(s.time)}${s.timeLabel ? " · " + esc(s.timeLabel) : ""}</span>` : ""}
-      ${tk ? `<span class="chip">Ticket saved</span>` : ""}
-      ${closed ? `<span class="chip warn">Closed this day</span>` : ""}
-      ${!closed && warn ? `<span class="chip warn">${esc(warn)}</span>` : ""}
-      ${notice ? `<span class="chip warn">Check: closure notice</span>` : ""}
-      ${!located ? `<span class="chip warn">Needs a location</span>` : ""}
-      <div class="tools">
-        <button data-act="up" data-id="${s.id}" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
-        <button data-act="down" data-id="${s.id}" aria-label="Move down" ${i === stops.length - 1 ? "disabled" : ""}>↓</button>
-        ${p ? `<button data-act="swap" data-id="${s.id}">Swap</button><button class="text" data-act="detail" data-id="${s.id}">Details</button>` : `<button class="text" data-act="swap" data-id="${s.id}">Choose place</button>`}
-        ${!located ? `<button class="text" data-act="pin" data-id="${s.id}">Pin on map</button>` : ""}
-        <button data-act="remove" data-id="${s.id}" aria-label="Remove">✕</button>
-      </div></div></div>`;
+    const tags = [
+      s.timeLabel ? `<span class="tag solid">${esc(s.timeLabel)}</span>` : "",
+      tk ? `<span class="tag ok">Ticket saved</span>` : "",
+      closed ? `<span class="tag warn">Closed this day</span>` : "",
+      !closed && warn ? `<span class="tag warn">${esc(warn)}</span>` : "",
+      notice ? `<span class="tag warn">Closure notice</span>` : "",
+      p && !located ? `<span class="tag warn">Needs a location</span>` : "",
+    ].join("");
+    const tap = p && !editing;
+    html += `<div class="stop${i === stops.length - 1 ? " last" : ""}" id="stop-${s.id}">
+      <div class="when">${splitTime(s.time)}</div>
+      <div class="rail"><span class="dot${p ? "" : " empty"}">${i + 1}</span></div>
+      <div class="body${tap ? " tap" : ""}" ${tap ? `data-act="detail" data-id="${s.id}" role="button" tabindex="0"` : ""}>
+        <div class="kicker">${esc(s.kicker || "")}</div>
+        <div class="name"><span>${p ? esc(p.name) : `<span class="muted">Open — choose a place</span>`}</span>${tap ? `<span class="chev">›</span>` : ""}</div>
+        ${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}
+        ${tags ? `<div class="tags">${tags}</div>` : ""}
+        ${!p || !located ? `<div class="inline-actions">
+            <button class="lead" data-act="swap" data-id="${s.id}">${p ? "Change place" : "Choose a place"}</button>
+            <button data-act="pin" data-id="${s.id}">Drop a pin</button></div>` : ""}
+        <div class="edit-tools">
+          <button data-act="up" data-id="${s.id}" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+          <button data-act="down" data-id="${s.id}" aria-label="Move down" ${i === stops.length - 1 ? "disabled" : ""}>↓</button>
+          ${p ? `<button data-act="swap" data-id="${s.id}">Swap</button>` : ""}
+          <button class="del" data-act="remove" data-id="${s.id}">Remove</button>
+        </div>
+      </div></div>`;
   });
   $("#list").innerHTML = html;
 
   const n = stops.filter((s) => hasLoc(placeOf(s))).length;
-  $("#daySummary").textContent = `${stops.length} stops · about ${total.toFixed(1)} km on foot${n < stops.length ? " (so far)" : ""}`;
+  $("#daySummary").textContent = `${stops.length} stops · about ${total.toFixed(1)} km on foot${n < stops.length ? " so far" : ""}`;
 
   const edited = !!state.days[d.id];
-  $("#actions").innerHTML = `<button class="ghost" data-act="add">+ Add a place</button>` +
-    `<button class="ghost" data-act="nearMe">Near me</button>` +
-    (edited ? `<button class="ghost plain" data-act="reset">Reset day</button>` : "");
   const mids = routeTexts.slice(0, -1).slice(0, 9);
-  $("#dayMaps").innerHTML = routeTexts.length
-    ? `<a class="ghost" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="${esc(
-        `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(hotelText())}&destination=${encodeURIComponent(routeTexts[routeTexts.length - 1])}${mids.length ? `&waypoints=${encodeURIComponent(mids.join("|"))}` : ""}&travelmode=walking`)}">Whole day in Google Maps (walking) ↗</a>`
+  const routeUrl = routeTexts.length
+    ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(hotelText())}&destination=${encodeURIComponent(routeTexts[routeTexts.length - 1])}${mids.length ? `&waypoints=${encodeURIComponent(mids.join("|"))}` : ""}&travelmode=walking`
     : "";
+  $("#actions").innerHTML = editing
+    ? `<button class="tool on" data-act="editToggle">${ic("edit")} Done</button>
+       <button class="tool" data-act="add">${ic("plus")} Add a place</button>
+       ${edited ? `<button class="tool quiet" data-act="reset">${ic("reset")} Restore original plan</button>` : ""}`
+    : `<button class="tool" data-act="editToggle">${ic("edit")} Edit day</button>
+       <button class="tool" data-act="add">${ic("plus")} Add</button>
+       <button class="tool" data-act="nearMe">${ic("locate")} Near me</button>
+       ${routeUrl ? `<a class="tool" target="_blank" rel="noopener" href="${esc(routeUrl)}">${ic("route")} Whole day</a>` : ""}`;
 
   drawMap(stops, pts, opts.fit);
 }
@@ -229,18 +281,19 @@ function render(opts = {}) {
 function drawMap(stops, pts, fit) {
   map.invalidateSize();
   layer.clearLayers();
-  const icon = (label, cls = "") => L.divIcon({ className: "", html: `<div class="pin ${cls}">${label}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
-  L.marker([HOTEL().lat, HOTEL().lng], { icon: icon("H", "h") }).bindPopup(esc(HOTEL().name)).addTo(layer);
+  const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#2c4a6e";
+  const icon = (label, cls = "") => L.divIcon({ className: "", html: `<div class="pin ${cls}">${label}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
+  L.marker([HOTEL().lat, HOTEL().lng], { icon: icon("H", "h"), zIndexOffset: -10 }).bindPopup(esc(HOTEL().name)).addTo(layer);
+  L.polyline(pts.map((p) => [p.lat, p.lng]), { color: accent, weight: 2.5, opacity: .85, dashArray: "2 7", lineCap: "round" }).addTo(layer);
   stops.forEach((s, i) => {
     const p = placeOf(s);
     if (!hasLoc(p)) return;
     L.marker([p.lat, p.lng], { icon: icon(i + 1) }).bindPopup(esc(p.name))
       .on("click", () => flash(s.id)).addTo(layer);
   });
-  L.polyline(pts.map((p) => [p.lat, p.lng]), { color: "#b4532a", weight: 3, opacity: .9, dashArray: "1 8", lineCap: "round" }).addTo(layer);
   if (fit) {
     const b = L.latLngBounds(pts.map((p) => [p.lat, p.lng]));
-    map.fitBounds(b, { padding: [36, 36], maxZoom: 16 });
+    map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
   }
 }
 
@@ -255,18 +308,19 @@ function flash(id) {
 function renderDeparture(d) {
   const f = d.flight;
   const checks = state.checks[d.id] || {};
-  $("#daySummary").textContent = "No sightseeing today";
-  $("#list").innerHTML = `
-    <div class="flight">
-      <div class="eyebrow" style="color:#bfb5a0">Flight</div>
-      <div class="big">${esc(f.number)}</div>
-      <p>${esc(f.from)} → ${esc(f.to)}</p>
-      <p>Departs ${esc(f.departs)}</p>
-      <p>${esc(f.baggage)}</p>
-    </div>
-    <h4 class="eyebrow" style="margin:22px 0 4px">Before you leave</h4>
-    ${d.checklist.map((t, i) => `<label class="check"><input type="checkbox" data-act="check" data-i="${i}" ${checks[i] ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}`;
+  const [from, to] = [f.from, f.to];
+  $("#daySummary").textContent = "Travel day";
   $("#actions").innerHTML = "";
+  $("#list").innerHTML = `
+    <div class="pass">
+      <div class="eyebrow">Boarding · ${esc(fmtDate(d, { weekday: "long", month: "short", day: "numeric" }))}</div>
+      <div class="flightno">${esc(f.number)}</div>
+      <div class="route"><div class="place">${esc(from)}</div><div class="plane">✈</div><div class="place">${esc(to)}</div></div>
+      <div class="perf"></div>
+      <div class="row"><div><span class="eyebrow">Departs</span><b>${esc(f.departs)}</b></div><div><span class="eyebrow">Bags</span><b>${esc(f.baggage)}</b></div></div>
+    </div>
+    <div class="checklist"><h3>Before you leave</h3>
+    ${d.checklist.map((t, i) => `<label class="check"><input type="checkbox" data-act="check" data-i="${i}" ${checks[i] ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>`;
 }
 
 // ---------- actions ----------
@@ -280,17 +334,20 @@ function onClick(e) {
       const saved = store.raw("paris.day." + id);
       dayId = city().days.some((d) => d.id === saved) ? saved : city().days[0].id;
       store.setRaw("paris.day", dayId);
-      render({ fit: true }); offlineStatus(); window.scrollTo({ top: 0 });
+      render({ fit: true, animate: true }); offlineStatus(); window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
-  else if (act === "tab") { dayId = id; store.setRaw("paris.day", id); store.setRaw("paris.day." + cityId, id); cancelPending(); render({ fit: true }); window.scrollTo({ top: 0 }); }
+  else if (act === "tab") { dayId = id; store.setRaw("paris.day", id); store.setRaw("paris.day." + cityId, id); cancelPending(); render({ fit: true, animate: true });
+    const top = $("#datebar").offsetTop;
+    if (scrollY > top) window.scrollTo({ top, behavior: "smooth" }); }
+  else if (act === "editToggle") { editing = !editing; render(); }
   else if (act === "up") edit((l) => move(l, id, -1));
   else if (act === "down") edit((l) => move(l, id, 1));
-  else if (act === "remove") edit((l) => { l.splice(l.findIndex((s) => s.id === id), 1); }, { fit: true });
+  else if (act === "remove") { if (confirm("Remove this stop from the day?")) edit((l) => { l.splice(l.findIndex((s) => s.id === id), 1); }, { fit: true }); }
   else if (act === "swap") openSwap(id);
   else if (act === "pin") startPin(id);
   else if (act === "add") openAdd();
-  else if (act === "reset") { delete state.days[day().id]; save(); render({ fit: true }); }
+  else if (act === "reset") { if (confirm("Restore this day to the original plan? Your changes to this day will be undone.")) { delete state.days[day().id]; save(); render({ fit: true }); } }
   else if (act === "detail") openDetail(id);
   else if (act === "closeDetail") closeDetail();
   else if (act === "addTicket") { $("#fileIn").value = ""; $("#fileIn").click(); }
@@ -315,7 +372,7 @@ function move(l, id, dir) {
 
 // ---------- pickers ----------
 function openSheet(html) {
-  $("#sheet").innerHTML = html + `<button class="ghost sheetClose" data-sheet="close">Close</button>`;
+  $("#sheet").innerHTML = html + `<button class="sheetClose" data-sheet="close">Close</button>`;
   $("#sheet").hidden = false; $("#scrim").hidden = false;
   $("#sheet").querySelector("[data-sheet=close]").addEventListener("click", closeSheet);
 }
@@ -330,12 +387,12 @@ function picker({ title, alts = [], onPick, allowPin }) {
     <div id="results"></div>`);
   const show = () => {
     const q = $("#q").value.trim().toLowerCase();
-    const row = ([pid, p]) => `<button class="opt" data-pid="${pid}"><span>${esc(p.name)}</span><span class="tag">${catLabel[p.cat] || ""}</span></button>`;
+    const row = ([pid, p]) => `<button class="opt" data-pid="${pid}"><span>${esc(p.name)}</span><span class="optcat">${catLabel[p.cat] || ""}</span></button>`;
     let h = "";
     if (!q && alts.length) h += `<h4>Your alternates</h4>` + alts.filter((a) => DATA.places[a]).map((a) => row([a, DATA.places[a]])).join("");
     const rest = all.filter(([pid, p]) => (!q || p.name.toLowerCase().includes(q)) && (q || !alts.includes(pid)));
     h += `<h4>${q ? "Results" : "All places"}</h4>` + (rest.map(row).join("") || `<p class="muted">No match.</p>`);
-    if (allowPin) h += `<h4>Somewhere else</h4><button class="opt" data-pid="__gmaps"><span>Paste a Google Maps link</span><span class="tag">From Maps</span></button><button class="opt" data-pid="__pin"><span>Drop my own pin on the map</span><span class="tag">Custom</span></button>`;
+    if (allowPin) h += `<h4>Somewhere else</h4><button class="opt" data-pid="__gmaps"><span>Paste a Google Maps link</span><span class="optcat">From Maps</span></button><button class="opt" data-pid="__pin"><span>Drop my own pin on the map</span><span class="optcat">Custom</span></button>`;
     $("#results").innerHTML = h;
   };
   show();
@@ -448,7 +505,7 @@ function nearbyHtml(list) {
   return list.map((n) => `<div class="nrow">
       <div class="ninfo"><div class="nname">${esc(n.name)} <span class="tagc">${CAT_LABEL[n.cat] || ""}</span></div>
         <div class="note">${esc(n.note)}</div>
-        <div class="note">${fmtKm(n.km)} · about ${n.min} min on foot</div></div>
+        <div class="dist">${n.min} min walk · ${fmtKm(n.km)}</div></div>
       <div class="nbtns"><button data-act="addNearby" data-i="${n.i}">Add to day</button><a href="${esc(searchUrl(n))}" target="_blank" rel="noopener">Map ↗</a></div>
     </div>`).join("");
 }
@@ -477,8 +534,8 @@ function renderNearSheet() {
   const far = list.length && list[0].km > 4;
   openSheet(`<h3>Near you now</h3>
     <div class="chips">${chip("all", "All")}${chip("eat", "Eat")}${chip("sweet", "Sweet")}${chip("shop", "Shop")}${chip("sight", "Sights")}</div>
-    <p class="note" style="margin:6px 0 8px">Live results with ratings and hours, in Google Maps:</p>${gmLinks(nearOrigin.lat, nearOrigin.lng)}
-    <p class="note" style="margin:14px 0 0">Our hand-picked favourites:</p>
+    <p class="sublabel" style="margin-top:6px">Live in Google Maps</p>${gmLinks(nearOrigin.lat, nearOrigin.lng)}
+    <p class="sublabel">Hand-picked favourites</p>
     ${far ? `<p class="note">You seem to be far from the hand-picked list. Distances below are from where you are.</p>` : ""}
     ${nearbyHtml(list)}
     <p class="privacy">Your location stays on your phone. Favourites are a hand-picked list, so check hours before you go.</p>`);
@@ -545,15 +602,15 @@ function closedOn(pid, date) {
 
 function hoursHtml(g, date) {
   if (!g.hours) return `<p class="muted">Hours not added yet.</p>`;
-  if (typeof g.hours === "string") return `<p>${esc(g.hours)}</p>`;
+  if (typeof g.hours === "string") return `<div class="callout">${esc(g.hours)}</div>${g.hoursNote ? `<p class="fineprint">${esc(g.hoursNote)}</p>` : ""}`;
   const wd = weekday(date);
   const label = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const today = g.hours[wd];
   const rows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((k) =>
     `<tr class="${k === wd ? "today" : ""} ${isClosed(g.hours[k]) ? "closed" : ""}"><td>${k}</td><td>${esc(g.hours[k])}</td></tr>`).join("");
-  return `<div class="callout ${isClosed(today) ? "alert" : ""}">${isClosed(today) ? `Closed on ${esc(label)}. Pick another day or swap this stop.` : `On ${esc(label)}: ${esc(today)}`}</div>
-    <table class="hours" style="margin-top:12px">${rows}</table>
-    ${g.hoursNote ? `<p class="privacy">${esc(g.hoursNote)}</p>` : ""}`;
+  return `<div class="callout ${isClosed(today) ? "alert" : ""}">${isClosed(today) ? `Closed on ${esc(label)}. Pick another day or swap this stop.` : `<span class="muted">${esc(label)}</span><br><b style="font-weight:600">${esc(today)}</b>`}</div>
+    <table class="hours">${rows}</table>
+    ${g.hoursNote ? `<p class="fineprint">${esc(g.hoursNote)}</p>` : ""}`;
 }
 
 function openDetail(stopId) {
@@ -565,26 +622,32 @@ function openDetail(stopId) {
   detail = { stopId, key };
   const g = (s.pid && DATA.guide && DATA.guide[s.pid]) || {};
   const q = encodeURIComponent(`${p.name} ${p.address || city().name}`);
-  const hi = (g.highlights || []).map((h) => `<details><summary><span class="t">${esc(h.title)}</span><span class="by">${esc(h.by || "")}</span></summary><p>${esc(h.story)}</p></details>`).join("");
+  const hi = (g.highlights || []).map((h, i) => `<details><summary><span class="no">${i + 1}.</span><span><span class="t">${esc(h.title)}</span><span class="by">${esc(h.by || "")}</span></span><span class="plus">+</span></summary><p>${esc(h.story)}</p></details>`).join("");
   const hs = (g.history || []).map((h) => `<div class="story"><h4>${esc(h.title)}</h4><p>${esc(h.text)}</p></div>`).join("");
-  $("#detail").innerHTML = `
-    <button class="back" data-act="closeDetail">← Back to the day</button>
-    <div class="kicker">${esc(s.kicker || "")}</div>
-    <h2>${esc(p.name)}</h2>
-    ${p.address ? `<div class="muted">${esc(p.address)}</div>` : ""}
-    <a class="maplink" href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Open in Google Maps ↗</a>
-    ${s.time ? `<div><span class="chip">${esc(s.time)}${s.timeLabel ? " · " + esc(s.timeLabel) : ""}</span></div>` : ""}
-    <section><h3>Your ticket</h3><div id="tickets"></div>
-      <button class="ghost" data-act="addTicket">+ Add ticket or confirmation (PDF or photo)</button>
-      <div id="noteLink"></div>
-      <p class="privacy">Saved only on this phone. It is never uploaded. Keep the original in Apple Notes as a backup.</p></section>
-    <section><h3>Opening hours</h3>${alertFor(s.pid, d.date) ? `<div class="callout alert" style="margin-bottom:12px">${esc(alertFor(s.pid, d.date))}</div>` : ""}${hoursHtml(g, d.date)}</section>
-    ${hasLoc(p) ? `<section><h3>Nearby to eat and browse</h3><p class="note" style="margin:0 0 8px">Live results with ratings and hours, in Google Maps:</p>${gmLinks(p.lat, p.lng)}<p class="note" style="margin:14px 0 0">Our hand-picked favourites:</p>${nearbyHtml(nearbyList(p.lat, p.lng, { limit: 6, maxKm: 1.2, exclude: p.name }))}<p class="privacy">Favourites are a hand-picked list, so check hours before you go.</p></section>` : ""}
-    ${g.tip ? `<section><h3>Tour guide tip</h3><div class="callout">${esc(g.tip)}</div></section>` : ""}
-    ${hi ? `<section><h3>Don’t miss</h3>${hi}</section>` : ""}
-    ${hs ? `<section><h3>Stories and history</h3>${hs}</section>` : ""}
-    ${!hi && !hs ? `<section><h3>Stories</h3><p class="muted">No stories for this place yet.</p></section>` : ""}
-    <p class="verify">Hours come from public listings checked in October 2026. Stories are curated from general art-history knowledge. Confirm hours on the official site before you go.</p>`;
+  const notice = alertFor(s.pid, d.date);
+  $("#detail").innerHTML = `<div class="dwrap">
+    <div class="dtop"><button class="back" data-act="closeDetail">${ic("back")} ${esc(fmtDate(d, { weekday: "long" }))}</button><span class="eyebrow">${esc(city().name)}</span></div>
+    <div class="dhero">
+      <div class="kicker">${esc(s.kicker || "")}${s.time ? ` · ${esc(s.time)}` : ""}</div>
+      <h2>${esc(p.name)}</h2>
+      ${p.address ? `<div class="addr">${esc(p.address)}</div>` : ""}
+      <div class="tags">
+        ${s.timeLabel ? `<span class="tag solid">${esc(s.timeLabel)}</span>` : ""}
+        <a class="tag" style="text-decoration:none" href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">${ic("map")} Open in Google Maps</a>
+      </div>
+    </div>
+    <div class="dbody">
+      ${g.tip ? `<section class="dsec"><h3>From your guide</h3><div class="callout tip">${esc(g.tip)}</div></section>` : ""}
+      <section class="dsec"><h3>Your ticket</h3>
+        <div class="ticketcard"><div id="tickets"></div><div id="noteLink"></div></div>
+        <div class="btn-row"><button class="tool" data-act="addTicket">${ic("plus")} Add PDF or photo</button><span id="linkBtn"></span></div>
+        <p class="privacy">Saved only on this phone, never uploaded. Keep the original in Apple Notes as a backup.</p></section>
+      <section class="dsec"><h3>Opening hours</h3>${notice ? `<div class="callout alert" style="margin-bottom:12px">${esc(notice)}</div>` : ""}${hoursHtml(g, d.date)}</section>
+      ${hi ? `<section class="dsec catalog"><h3>Don’t miss</h3>${hi}</section>` : ""}
+      ${hs ? `<section class="dsec"><h3>Stories</h3>${hs}</section>` : ""}
+      ${hasLoc(p) ? `<section class="dsec"><h3>Nearby</h3><p class="sublabel" style="margin-top:0">Live in Google Maps</p>${gmLinks(p.lat, p.lng)}<p class="sublabel">Hand-picked favourites</p>${nearbyHtml(nearbyList(p.lat, p.lng, { limit: 6, maxKm: 1.2, exclude: p.name }))}<p class="privacy">Favourites are a hand-picked list, so check hours before you go.</p></section>` : ""}
+      <p class="verify">Hours come from public listings checked in October 2026.<br>Stories are curated from general art-history knowledge.</p>
+    </div></div>`;
   renderNoteLink();
   $("#detail").hidden = false;
   $("#detail").scrollTop = 0;
@@ -603,12 +666,12 @@ async function renderTickets() {
   if (!el || !detail) return;
   let list;
   try { list = await ticketsFor(detail.key); }
-  catch { el.innerHTML = `<p class="muted">This browser mode can’t save tickets. Open the app from your Home Screen icon.</p>`; return; }
+  catch { el.innerHTML = `<p class="ticket-empty">This browser mode can’t save tickets. Open the app from your Home Screen icon.</p>`; return; }
   el.innerHTML = list.length
     ? list.map((t) => `<div class="ticket"><span class="tname">${esc(t.name)}</span><button class="open" data-act="viewTicket" data-id="${t.id}">Open</button><button data-act="delTicket" data-id="${t.id}">Remove</button></div>`).join("")
     : state.links[detail.key]
-      ? `<p>Ticket added. It’s in your Apple Note, linked below.</p>`
-      : `<p class="muted">No ticket added yet.</p>`;
+      ? `<p class="ticket-added">Ticket added, in your Apple Note.</p>`
+      : `<p class="ticket-empty">No ticket added yet.</p>`;
 }
 
 function renderNoteLink() {
@@ -616,9 +679,10 @@ function renderNoteLink() {
   if (!el || !detail) return;
   const url = state.links[detail.key];
   el.innerHTML = url
-    ? `<div class="ticket"><span class="tname">Apple Note link</span><a class="maplink" style="margin:0" href="${esc(url)}" target="_blank" rel="noopener">Open note ↗</a><button data-act="delLink">Remove</button></div>
-       <p class="privacy">Needs a signal. Use the saved file above for offline.</p>`
-    : `<button class="ghost plain" style="margin-top:8px;width:100%;border-color:var(--line);color:var(--muted)" data-act="setLink">Or link to the Apple Note</button>`;
+    ? `<div class="ticket"><span class="tname">Apple Note <span class="muted" style="font-size:12px">· needs signal</span></span><a class="small-btn" href="${esc(url)}" target="_blank" rel="noopener">Open ↗</a><button data-act="delLink">Remove</button></div>`
+    : "";
+  const lb = $("#linkBtn");
+  if (lb) lb.innerHTML = url ? "" : `<button class="tool quiet" data-act="setLink">Link an Apple Note</button>`;
 }
 function setNoteLink() {
   const v = (prompt("Paste the Apple Notes link (in Notes: Share → Copy Link)") || "").trim();
@@ -736,7 +800,7 @@ async function saveTiles() {
 function offlineStatus() {
   const t = store.get("paris.tiles." + cityId) || (cityId === "paris" && store.get("paris.tiles"));
   $("#offlineMsg").textContent = t ? `${city().name} map saved on this phone ✓` : "Tap once on Wi-Fi so the map works without signal.";
-  $("#offlineBtn").textContent = t ? `Refresh ${city().name} offline map` : `Save ${city().name} map for offline`;
+  $("#offlineBtn").innerHTML = `${ic("map")} ${t ? `Refresh ${esc(city().name)} offline map` : `Save ${esc(city().name)} map for offline`}`;
 }
 
 boot();
